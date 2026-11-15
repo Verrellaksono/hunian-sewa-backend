@@ -1,0 +1,13 @@
+# Dependensi
+node_modules/
+
+# Rahasia — JANGAN terpush
+.env
+
+# Berkas runtime
+uploads/
+logs/
+
+# Sistem
+.DS_Store
+Thumbs.db

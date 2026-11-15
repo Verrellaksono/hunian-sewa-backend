@@ -1,0 +1,30 @@
+{
+  "name": "hunian-sewa-backend",
+  "version": "1.0.0",
+  "description": "Backend Sistem Informasi Pengelolaan Hunian Sewa (Node.js + Express + PostgreSQL)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "migrate": "node db/migrate.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.1",
+    "multer": "^2.0.2",
+    "node-cron": "^4.2.1",
+    "pg": "^8.19.0",
+    "uuid": "^13.0.0"
+  },
+  "allowScripts": {
+    "bcrypt@6.0.0": true
+  }
+}
