@@ -7,6 +7,7 @@ node_modules/
 # Berkas runtime
 uploads/
 logs/
+tests/
 
 # Sistem
 .DS_Store
