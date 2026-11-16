@@ -226,4 +226,26 @@ async function deactivateUser(req, res, next) {
   }
 }
 
-module.exports = { getMe, updateMe, changeMyPassword, registerAccount, activateUser, deactivateUser };
+// Reset password akun (password sementara baru)
+async function resetUserPassword(req, res, next) {
+  try {
+    const target = await findManageableAccount(req, req.params.id);
+
+    // Generate password sementara acak
+    const temporaryPassword = crypto.randomBytes(9).toString('base64url');
+    const hash = await bcrypt.hash(temporaryPassword, 10);
+
+    // Query ubah password akun user
+    await pool.query(`UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1`, [target.id, hash]);
+
+    res.status(200).json({
+      success: true,
+      message: `Password akun ${target.name} berhasil direset. Token sesi lama akun tersebut tetap berlaku sampai kedaluwarsa (2 jam).`,
+      temporary_password: temporaryPassword,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { getMe, updateMe, changeMyPassword, registerAccount, activateUser, deactivateUser, resetUserPassword };

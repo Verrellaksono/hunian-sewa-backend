@@ -18,5 +18,7 @@ router.post('/users', auth, requireRole('owner', 'caretaker'), controller.regist
 router.patch('/users/:id/activate', auth, requireRole('owner', 'caretaker'), controller.activateUser);
 // Deaktivasi akun
 router.patch('/users/:id/deactivate', auth, requireRole('owner', 'caretaker'), controller.deactivateUser);
+// Reset password akun
+router.patch('/users/:id/reset-password', auth, requireRole('owner', 'caretaker'), controller.resetUserPassword);
 
 module.exports = router;
