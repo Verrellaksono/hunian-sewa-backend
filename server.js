@@ -2,12 +2,16 @@ require('dotenv').config();
 
 const express = require('express');
 const morgan = require('morgan');
+const cors = require('cors');
 
 const config = require('./config');
 const app = express();
 const PORT = config.port;
 
 // --- Middleware global ---
+// cors(): frontend & backend berada di folder/origin berbeda (frontend dikerjakan terpisah),
+// browser memblok request lintas origin kecuali server mengizinkan.
+app.use(cors());
 app.use(morgan('dev')); // logger HTTP: cetak setiap request ke console
 app.use(express.json());
 
