@@ -2,19 +2,14 @@ require('dotenv').config();
 
 const express = require('express');
 const morgan = require('morgan');
-const path = require('path');
 
 const config = require('./config');
-
 const app = express();
 const PORT = config.port;
 
 // --- Middleware global ---
-app.use(morgan('dev'));
+app.use(morgan('dev')); // logger HTTP: cetak setiap request ke console
 app.use(express.json());
-
-// --- Berkas statis frontend (folder public/) ---
-app.use(express.static(path.join(__dirname, 'public')));
 
 // --- Halaman utama ---
 app.get('/', (req, res) => {
@@ -34,7 +29,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // --- Rute modul (dimount saat tiap modul selesai dibangun) ---
-// app.use('/api/auth', require('./modules/auth/routes'));
+app.use('/api/auth', require('./modules/auth/routes'));
 // app.use('/api/users', require('./modules/user/routes'));
 // app.use('/api/rooms', require('./modules/room/routes'));
 // app.use('/api/announcements', require('./modules/announcement/routes'));
