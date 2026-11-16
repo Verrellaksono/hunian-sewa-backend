@@ -171,4 +171,59 @@ async function registerAccount(req, res, next) {
   }
 }
 
-module.exports = { getMe, updateMe, changeMyPassword, registerAccount };
+// Cari akun untuk dikelola + validasi hak actor
+async function findManageableAccount(req, id) {
+  // Query cari akun target
+  const target = (await pool.query(
+    `SELECT id, name, email, phone, role, guardian_id, is_active, created_at FROM users WHERE id = $1 LIMIT 1`,
+    [id]
+  )).rows[0];
+  // Validasi Akun Ditemukan
+  if (!target) throw new ApiError(404, 'Akun tidak ditemukan.');
+
+  // Validasi Hak Caretaker (aturan bisnis #7: caretaker tidak boleh menyentuh caretaker lain & owner)
+  if (req.user.role !== 'owner' && !['tenant', 'guardian'].includes(target.role)) {
+    throw new ApiError(403, 'Caretaker hanya dapat mengelola akun tenant dan guardian.');
+  }
+  return target;
+}
+
+// Aktifkan akun
+async function activateUser(req, res, next) {
+  try {
+    const target = await findManageableAccount(req, req.params.id);
+
+    // Query aktifkan akun
+    const updated = await pool.query(
+      `UPDATE users SET is_active = true, updated_at = now() WHERE id = $1
+       RETURNING id, name, email, phone, role, guardian_id, is_active, created_at`,
+      [target.id]
+    );
+    res.status(200).json({ success: true, message: `Akun ${target.name} berhasil diaktifkan.`, data: updated.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Deaktivasi akun
+async function deactivateUser(req, res, next) {
+  try {
+    const target = await findManageableAccount(req, req.params.id);
+    // Validasi Tidak Boleh Akun Sendiri
+    if (target.id === req.user.id) {
+      throw new ApiError(403, 'Tidak dapat menonaktifkan akun Anda sendiri.');
+    }
+
+    // Query nonaktifkan akun (akses terputus otomatis via middleware auth)
+    const updated = await pool.query(
+      `UPDATE users SET is_active = false, updated_at = now() WHERE id = $1
+       RETURNING id, name, email, phone, role, guardian_id, is_active, created_at`,
+      [target.id]
+    );
+    res.status(200).json({ success: true, message: `Akun ${target.name} berhasil dinonaktifkan.`, data: updated.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { getMe, updateMe, changeMyPassword, registerAccount, activateUser, deactivateUser };
