@@ -3,6 +3,7 @@ const crypto = require('crypto');
 
 const { pool, withTransaction } = require('../../db');
 const ApiError = require('../../utils/ApiError');
+const { paginated } = require('../../utils/pagination');
 
 const VALID_ROLES = ['owner', 'caretaker', 'tenant', 'guardian'];
 
@@ -171,6 +172,55 @@ async function registerAccount(req, res, next) {
   }
 }
 
+// Daftar pengguna (paginasi + filter peran)
+async function listUsers(req, res, next) {
+  try {
+    const role = req.query.role;
+    // Validasi Filter Peran
+    if (role && !VALID_ROLES.includes(role)) {
+      throw new ApiError(400, `Filter peran harus salah satu dari: ${VALID_ROLES.join(', ')}.`);
+    }
+    // Validasi Hak Caretaker (aturan bisnis #7: caretaker tidak boleh melihat akun owner/caretaker)
+    if (req.user.role !== 'owner' && role && !['tenant', 'guardian'].includes(role)) {
+      throw new ApiError(403, 'Caretaker hanya dapat melihat akun tenant dan guardian.');
+    }
+
+    // Caretaker otomatis dibatasi tenant & guardian
+    const where = [];
+    const params = [];
+    if (req.user.role !== 'owner') {
+      params.push(['tenant', 'guardian']);
+      where.push(`u.role = ANY($${params.length})`);
+    }
+    if (role) {
+      params.push(role);
+      where.push(`u.role = $${params.length}`);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    // Query hitung total
+    const total = Number(
+      (await pool.query(`SELECT count(*) AS n FROM users u ${whereSql}`, params)).rows[0].n
+    );
+
+    // Query data halaman + info wali
+    params.push(req.pagination.limit, req.pagination.offset);
+    const { rows } = await pool.query(
+      `SELECT u.id, u.name, u.email, u.phone, u.role, u.guardian_id, u.is_active, u.created_at,
+              g.name AS guardian_name, g.email AS guardian_email, g.phone AS guardian_phone
+       FROM users u LEFT JOIN users g ON g.id = u.guardian_id
+       ${whereSql}
+       ORDER BY u.role, u.name
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    res.status(200).json({ success: true, ...paginated(rows, total, req.pagination) });
+  } catch (err) {
+    next(err);
+  }
+}
+
 // Cari akun untuk dikelola + validasi hak actor
 async function findManageableAccount(req, id) {
   // Query cari akun target
@@ -248,4 +298,4 @@ async function resetUserPassword(req, res, next) {
   }
 }
 
-module.exports = { getMe, updateMe, changeMyPassword, registerAccount, activateUser, deactivateUser, resetUserPassword };
+module.exports = { getMe, updateMe, changeMyPassword, registerAccount, listUsers, activateUser, deactivateUser, resetUserPassword };
