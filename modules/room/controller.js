@@ -1,5 +1,5 @@
+const { pool } = require('../../db');
 const ApiError = require('../../utils/ApiError');
-const service = require('./service');
 const { paginated } = require('../../utils/pagination');
 
 const VALID_STATUS = ['available', 'occupied', 'maintenance'];
@@ -13,7 +13,30 @@ async function list(req, res, next) {
       throw new ApiError(400, `Filter status harus salah satu dari: ${VALID_STATUS.join(', ')}.`);
     }
 
-    const { rows, total } = await service.list({ status, pagination: req.pagination });
+    // Query dasar + filter status bila diberikan
+    const where = [];
+    const params = [];
+    if (status) {
+      params.push(status);
+      where.push(`status = $${params.length}`);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    // Query hitung total
+    const total = Number(
+      (await pool.query(`SELECT count(*) AS n FROM rooms ${whereSql}`, params)).rows[0].n
+    );
+
+    // Query data halaman
+    params.push(req.pagination.limit, req.pagination.offset);
+    const { rows } = await pool.query(
+      `SELECT id, room_number, room_type, facilities, price, status, created_at, updated_at
+       FROM rooms ${whereSql}
+       ORDER BY room_number
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
     res.status(200).json({ success: true, ...paginated(rows, total, req.pagination) });
   } catch (err) {
     next(err);
@@ -38,13 +61,22 @@ async function create(req, res, next) {
       throw new ApiError(400, 'Status kamar tidak dapat diinput manual. Kamar baru otomatis tersedia; status diatur sistem.');
     }
 
-    const room = await service.create({
-      room_number: String(room_number).trim(),
-      room_type: String(room_type).trim(),
-      facilities: facilities ?? null,
-      price: price === '' ? null : price,
-    });
-    res.status(201).json({ success: true, message: 'Kamar berhasil ditambahkan.', data: room });
+    // Validasi Nomor Kamar Sudah Dipakai
+    const nomor = String(room_number).trim();
+    const dup = await pool.query(`SELECT 1 FROM rooms WHERE room_number = $1 LIMIT 1`, [nomor]);
+    if (dup.rowCount > 0) {
+      throw new ApiError(409, `Nomor kamar ${nomor} sudah dipakai.`);
+    }
+
+    // Insert kamar baru
+    const { rows } = await pool.query(
+      `INSERT INTO rooms (room_number, room_type, facilities, price)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, room_number, room_type, facilities, price, status, created_at, updated_at`,
+      [nomor, String(room_type).trim(), facilities ?? null, price === '' ? null : price]
+    );
+
+    res.status(201).json({ success: true, message: 'Kamar berhasil ditambahkan.', data: rows[0] });
   } catch (err) {
     next(err);
   }
@@ -67,8 +99,11 @@ async function update(req, res, next) {
       throw new ApiError(400, 'Isi minimal satu field yang ingin diubah.');
     }
 
-    // Cari kamar
-    const room = await service.findById(req.params.id);
+    // Query cari kamar
+    const room = (await pool.query(
+      `SELECT id, room_number, room_type, facilities, price, status FROM rooms WHERE id = $1 LIMIT 1`,
+      [req.params.id]
+    )).rows[0];
     // Validasi Kamar Ditemukan
     if (!room) throw new ApiError(404, 'Kamar tidak ditemukan.');
 
@@ -100,21 +135,30 @@ async function update(req, res, next) {
     if (price !== undefined) fields.price = price;
     if (status !== undefined) fields.status = status;
 
-    // Validasi Nomor Kamar Sudah Dipakai kamar lain
-    if (fields.room_number && fields.room_number !== room.room_number) {
-      const dup = await service.findByNumber(fields.room_number);
-      if (dup && dup.id !== room.id) {
-        throw new ApiError(409, `Nomor kamar ${fields.room_number} sudah dipakai.`);
-      }
-    }
-
     // Validasi Nomor Kamar Tidak Boleh Diubah Saat Terisi
     if (fields.room_number && room.status === 'occupied') {
       throw new ApiError(409, 'Nomor kamar tidak dapat diubah saat kamar sedang terisi.');
     }
 
-    const updated = await service.update(room.id, fields);
-    res.status(200).json({ success: true, message: 'Kamar berhasil diperbarui.', data: updated });
+    // Validasi Nomor Kamar Sudah Dipakai kamar lain
+    if (fields.room_number && fields.room_number !== room.room_number) {
+      const dup = await pool.query(`SELECT id FROM rooms WHERE room_number = $1 LIMIT 1`, [fields.room_number]);
+      if (dup.rows[0] && dup.rows[0].id !== room.id) {
+        throw new ApiError(409, `Nomor kamar ${fields.room_number} sudah dipakai.`);
+      }
+    }
+
+    // Bangun SET dinamis dari field yang dikirim
+    const keys = Object.keys(fields);
+    const sets = keys.map((k, i) => `${k} = $${i + 1}`).join(', ');
+    const updated = await pool.query(
+      `UPDATE rooms SET ${sets}, updated_at = now()
+       WHERE id = $${keys.length + 1}
+       RETURNING id, room_number, room_type, facilities, price, status, created_at, updated_at`,
+      [...Object.values(fields), room.id]
+    );
+
+    res.status(200).json({ success: true, message: 'Kamar berhasil diperbarui.', data: updated.rows[0] });
   } catch (err) {
     next(err);
   }
@@ -123,8 +167,34 @@ async function update(req, res, next) {
 // Hapus kamar
 async function remove(req, res, next) {
   try {
-    const result = await service.remove(req.params.id);
-    res.status(200).json({ success: true, message: `Kamar ${result.room_number} berhasil dihapus.` });
+    // Query cari kamar
+    const room = (await pool.query(
+      `SELECT id, room_number FROM rooms WHERE id = $1 LIMIT 1`,
+      [req.params.id]
+    )).rows[0];
+    // Validasi Kamar Ditemukan
+    if (!room) throw new ApiError(404, 'Kamar tidak ditemukan.');
+
+    // Cek kontrak berjalan (pending/active)
+    const running = await pool.query(
+      `SELECT 1 FROM tenancy_contracts WHERE room_id = $1 AND status IN ('pending', 'active') LIMIT 1`,
+      [room.id]
+    );
+    if (running.rowCount > 0) {
+      throw new ApiError(409, 'Kamar sedang terkontrak. Selesaikan dahulu kontraknya sebelum menghapus kamar.');
+    }
+
+    // Hapus kamar (tangkap FK bila punya riwayat kontrak lama)
+    try {
+      await pool.query(`DELETE FROM rooms WHERE id = $1`, [room.id]);
+      res.status(200).json({ success: true, message: `Kamar ${room.room_number} berhasil dihapus.` });
+    } catch (err) {
+      // 23503 = foreign key violation (riwayat kontrak lama masih menunjuk kamar ini)
+      if (err.code === '23503') {
+        throw new ApiError(409, 'Kamar memiliki riwayat kontrak. Kamar yang pernah terisi tidak dapat dihapus.');
+      }
+      throw err;
+    }
   } catch (err) {
     next(err);
   }

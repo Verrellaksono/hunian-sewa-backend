@@ -1,6 +1,7 @@
 const express = require('express');
 
 const auth = require('../../middlewares/auth');
+const requireRole = require('../../middlewares/requireRole');
 const controller = require('./controller');
 
 const router = express.Router();
@@ -11,5 +12,7 @@ router.get('/me', auth, controller.getMe);
 router.patch('/me', auth, controller.updateMe);
 // Ganti password sendiri
 router.patch('/me/password', auth, controller.changeMyPassword);
+// Daftarkan akun baru
+router.post('/users', auth, requireRole('owner', 'caretaker'), controller.registerAccount);
 
 module.exports = router;
