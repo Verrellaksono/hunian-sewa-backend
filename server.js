@@ -8,11 +8,10 @@ const config = require('./config');
 const app = express();
 const PORT = config.port;
 
-// --- Middleware global ---
-// cors(): frontend & backend berada di folder/origin berbeda (frontend dikerjakan terpisah),
-// browser memblok request lintas origin kecuali server mengizinkan.
+// Middleware global
+// cors: izinkan request dari frontend (origin berbeda)
 app.use(cors());
-app.use(morgan('dev')); // logger HTTP: cetak setiap request ke console
+app.use(morgan('dev')); // logger HTTP, cetak setiap request
 app.use(express.json());
 
 // --- Halaman utama ---
@@ -34,7 +33,7 @@ app.get('/api/health', (req, res) => {
 
 // --- Rute modul (dimount saat tiap modul selesai dibangun) ---
 app.use('/api/auth', require('./modules/auth/routes'));
-// app.use('/api/users', require('./modules/user/routes'));
+app.use('/api', require('./modules/user/routes')); // /api/me, /api/me/password
 // app.use('/api/rooms', require('./modules/room/routes'));
 // app.use('/api/announcements', require('./modules/announcement/routes'));
 // app.use('/api/contracts', require('./modules/contract/routes'));

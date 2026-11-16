@@ -1,8 +1,6 @@
-// Helper waktu & tanggal — zona WIB (Asia/Jakarta) dan mata uang Rp (NFR-08)
-
 const WIB = 'Asia/Jakarta';
 
-// Tanggal hari ini (WIB) dalam format 'YYYY-MM-DD' untuk perbandingan kolom DATE
+// Tanggal hari ini (WIB) format 'YYYY-MM-DD'
 function todayWIB() {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: WIB,
@@ -10,7 +8,7 @@ function todayWIB() {
   }).format(new Date());
 }
 
-// Tambah n bulan dengan penjepitan akhir bulan (31 Jan + 1 bln → 28/29 Feb)
+// Tambah n bulan (penjepitan akhir bulan: 31 Jan + 1 bln → 28/29 Feb)
 function addMonths(dateStr, n) {
   const [y, m, d] = dateStr.split('-').map(Number);
   const base = new Date(Date.UTC(y, m - 1 + n, 1));
@@ -19,19 +17,19 @@ function addMonths(dateStr, n) {
   return `${base.getUTCFullYear()}-${String(base.getUTCMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
-// Selisih hari (boleh negatif bila lewat jatuh tempo) antara dua tanggal 'YYYY-MM-DD'
+// Selisih hari (boleh negatif) antara dua tanggal 'YYYY-MM-DD'
 function daysBetween(fromDate, toDate) {
   const a = Date.UTC(...fromDate.split('-').map(Number));
   const b = Date.UTC(...toDate.split('-').map(Number));
   return Math.round((b - a) / 86400000);
 }
 
-// Format rupiah: 1500000 → 'Rp1.500.000'
+// Format rupiah
 function formatRupiah(value) {
   return 'Rp' + Number(value).toLocaleString('id-ID');
 }
 
-// Jam sekarang zona WIB (untuk log/scheduler)
+// Jam sekarang zona WIB
 function nowWIB() {
   return new Intl.DateTimeFormat('id-ID', {
     timeZone: WIB,

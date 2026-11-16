@@ -1,9 +1,9 @@
-// Verifikasi data seed: jumlah akun per peran + kamar + hash password bisa diverifikasi
 require('dotenv').config();
 const bcrypt = require('bcrypt');
 const { pool } = require('./index');
 
 (async () => {
+  // Query jumlah akun per peran
   const roles = await pool.query(
     `SELECT role, count(*) FROM users GROUP BY role ORDER BY role`
   );

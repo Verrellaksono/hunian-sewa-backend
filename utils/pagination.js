@@ -1,4 +1,4 @@
-// Paginasi (NFR-09): daftar > 10 data wajib paginasi. Default limit 10, maks 100.
+// Baca query paginasi
 function getPagination(query = {}) {
   const page = Math.max(parseInt(query.page || '1', 10) || 1, 1);
   let limit = parseInt(query.limit || '10', 10) || 10;

@@ -1,4 +1,3 @@
-// Konfigurasi terpusat — dibaca dari .env (lihat .env.example, dibuat di task 0.2)
 require('dotenv').config();
 
 module.exports = {

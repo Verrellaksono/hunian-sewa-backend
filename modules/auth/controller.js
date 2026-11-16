@@ -1,11 +1,11 @@
-// Controller MOD-01 Auth: lapisan HTTP (validasi input → service → respons)
 const ApiError = require('../../utils/ApiError');
 const service = require('./service');
 
+// Login
 async function login(req, res, next) {
   try {
     const { email, password } = req.body || {};
-
+    // Validasi Wajib Isi
     if (!email || !password) {
       throw new ApiError(400, 'Email dan password wajib diisi.');
     }

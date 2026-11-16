@@ -1,8 +1,8 @@
-// Verifikasi skema: daftar tabel + index unik
 require('dotenv').config();
 const { pool } = require('./index');
 
 (async () => {
+  // Query daftar tabel
   const tables = await pool.query(
     `SELECT table_name FROM information_schema.tables WHERE table_schema='public' ORDER BY 1`
   );

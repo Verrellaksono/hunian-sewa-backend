@@ -1,4 +1,3 @@
-// Skrip sekali-pakai: buat database hunian_sewa bila belum ada
 require('dotenv').config();
 const { Pool } = require('pg');
 const cfg = require('../config');

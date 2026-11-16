@@ -1,5 +1,3 @@
-// Runner migrasi: menerapkan file .sql di migrations/ sesuai urutan nama.
-// Tabel schema_migrations mencatat migrasi yang sudah diterapkan (idempotent).
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
