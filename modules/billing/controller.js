@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+
 const { pool, withTransaction } = require('../../db');
 const config = require('../../config');
 const ApiError = require('../../utils/ApiError');
@@ -162,4 +164,117 @@ async function pay(req, res, next) {
   }
 }
 
-module.exports = { list, getById, pay };
+// Pemetaan transaction_status (+fraud_status) Midtrans → kolom payments.status
+function mapTransactionStatus(transactionStatus, fraudStatus) {
+  if (transactionStatus === 'capture') {
+    if (fraudStatus === 'accept') return 'settlement';
+    if (fraudStatus === 'deny') return 'deny';
+    if (fraudStatus === 'challenge') return 'pending';
+    return null;
+  }
+  const map = {
+    settlement: 'settlement',
+    pending: 'pending',
+    deny: 'deny',
+    cancel: 'cancel',
+    expire: 'expire',
+    failure: 'failure',
+  };
+  return map[transactionStatus] || null;
+}
+
+// Bandingkan signature dengan waktu konstan
+function signatureMatches(received, expected) {
+  if (typeof received !== 'string' || received.length !== expected.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(received.toLowerCase()), Buffer.from(expected));
+}
+
+// Notifikasi pembayaran Midtrans (tanpa JWT — dilindungi signature)
+async function handlePayment(req, res, next) {
+  try {
+    const {
+      order_id,
+      status_code,
+      gross_amount,
+      signature_key,
+      transaction_status,
+      fraud_status,
+      payment_type,
+      transaction_id,
+    } = req.body || {};
+
+    // Validasi Konfigurasi (key kosong = webhook tidak boleh dipercaya sama sekali)
+    if (!config.midtrans.serverKey) {
+      throw new ApiError(503, 'Payment gateway belum dikonfigurasi.');
+    }
+
+    // Validasi Field Wajib
+    if (
+      order_id === undefined ||
+      status_code === undefined ||
+      gross_amount === undefined ||
+      signature_key === undefined ||
+      transaction_status === undefined
+    ) {
+      throw new ApiError(400, 'Notifikasi pembayaran tidak lengkap.');
+    }
+
+    // Validasi Signature: SHA512(order_id + status_code + gross_amount + server_key)
+    const expected = crypto
+      .createHash('sha512')
+      .update(`${order_id}${status_code}${gross_amount}${config.midtrans.serverKey}`)
+      .digest('hex');
+    if (!signatureMatches(signature_key, expected)) {
+      throw new ApiError(401, 'Signature tidak valid.');
+    }
+
+    // Cari payment
+    const payment = (await pool.query(
+      `SELECT id, invoice_id, status, gross_amount FROM payments WHERE order_id = $1`,
+      [String(order_id)]
+    )).rows[0];
+    if (!payment) throw new ApiError(404, 'Pembayaran tidak ditemukan.');
+
+    // Cocokkan Nominal
+    if (Number(gross_amount) !== Number(payment.gross_amount)) {
+      throw new ApiError(400, 'Nominal pembayaran tidak cocok.');
+    }
+
+    // Pemetaan Status Gateway
+    const newStatus = mapTransactionStatus(transaction_status, fraud_status);
+    if (!newStatus) {
+      throw new ApiError(400, `Status transaksi tidak dikenal: ${transaction_status}`);
+    }
+
+    // Idempotent: sudah settlement → OK tanpa proses ulang
+    if (payment.status === 'settlement') {
+      return res.status(200).json({ success: true, message: 'Pembayaran sudah diproses sebelumnya.' });
+    }
+    // Status tidak berubah (mis. pending → pending) → OK tanpa menulis ulang
+    if (payment.status === newStatus) {
+      return res.status(200).json({ success: true, message: 'Status pembayaran tidak berubah.' });
+    }
+
+    await pool.query(
+      `UPDATE payments
+       SET status = $2::varchar,
+           payment_method = COALESCE($3, payment_method),
+           gateway_transaction_id = COALESCE($4, gateway_transaction_id),
+           paid_at = CASE WHEN $2::varchar = 'settlement' THEN COALESCE(paid_at, now()) ELSE paid_at END,
+           gateway_payload = $5,
+           updated_at = now()
+       WHERE id = $1`,
+      [payment.id, newStatus, payment_type || null, transaction_id || null, req.body]
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Notifikasi pembayaran diproses.',
+      data: { order_id, status: newStatus },
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { list, getById, pay, handlePayment, mapTransactionStatus };
