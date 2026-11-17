@@ -1,5 +1,13 @@
 const { withTransaction } = require('../../db');
 const ApiError = require('../../utils/ApiError');
+const { addMonths } = require('../../utils/datetime');
+
+// Geser tanggal 'YYYY-MM-DD' n hari (boleh negatif)
+function addDays(dateStr, n) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d) + n * 86400000);
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+}
 
 // Validasi ID numerik positif dari body
 function parseId(value, label) {
@@ -26,7 +34,7 @@ function parseDate(value, label) {
 // Buat kontrak sewa baru (FR-12)
 async function create(req, res, next) {
   try {
-    const { tenant_id, room_id, start_date, end_date } = req.body || {};
+    const { tenant_id, room_id, start_date, duration_months } = req.body || {};
 
     // Validasi Wajib Isi
     if (tenant_id === undefined || room_id === undefined || start_date === undefined) {
@@ -38,12 +46,16 @@ async function create(req, res, next) {
 
     // Validasi Tanggal
     const startDate = parseDate(start_date, 'Tanggal mulai');
+    // Durasi sewa (bulan); kosong/null = rolling tanpa batas waktu
     let endDate = null;
-    if (end_date !== undefined && end_date !== null && end_date !== '') {
-      endDate = parseDate(end_date, 'Tanggal akhir');
-      if (endDate <= startDate) {
-        throw new ApiError(400, 'Tanggal akhir harus setelah tanggal mulai.');
+    if (duration_months !== undefined && duration_months !== null && duration_months !== '') {
+      const months = Number(duration_months);
+      if (!Number.isInteger(months) || months < 1) {
+        throw new ApiError(400, 'Durasi sewa harus bilangan bulat minimal 1 bulan. Kosongkan untuk sewa rolling tanpa batas waktu.');
       }
+      // end_date = start_date + durasi - 1 hari (selalu sejajar batas periode, tanpa prorata)
+      endDate = addMonths(startDate, months);
+      endDate = addDays(endDate, -1);
     }
 
     let contract;
@@ -135,4 +147,69 @@ async function create(req, res, next) {
   }
 }
 
-module.exports = { create };
+// Perpanjang kontrak: set/kosongkan end_date (FR-12)
+async function extend(req, res, next) {
+  try {
+    const body = req.body || {};
+    const { end_date } = body;
+
+    // Validasi Hanya Menerima end_date
+    if (Object.keys(body).some((k) => k !== 'end_date')) {
+      throw new ApiError(400, 'Endpoint ini hanya menerima field end_date (isi tanggal untuk memperpanjang, atau null untuk mengosongkan).');
+    }
+    // Validasi Wajib Ada end_date
+    if (end_date === undefined) {
+      throw new ApiError(400, 'Isi end_date (tanggal YYYY-MM-DD) untuk memperpanjang, atau null untuk mengosongkan.');
+    }
+
+    // Validasi Tanggal (null = kosongkan / tanpa batas waktu)
+    let endDate = null;
+    if (end_date !== null && end_date !== '') {
+      endDate = parseDate(end_date, 'Tanggal akhir');
+    }
+
+    const { contract, updated } = await withTransaction(async (client) => {
+      // Kunci baris kontrak
+      const locked = (await client.query(
+        `SELECT c.id, c.status, c.start_date, c.end_date, r.room_number, u.name AS tenant_name
+         FROM tenancy_contracts c
+         JOIN rooms r ON r.id = c.room_id
+         JOIN users u ON u.id = c.tenant_id
+         WHERE c.id = $1
+         FOR UPDATE OF c LIMIT 1`,
+        [parseId(req.params.id, 'ID kontrak')]
+      )).rows[0];
+      // Validasi Kontrak Ditemukan
+      if (!locked) throw new ApiError(404, 'Kontrak tidak ditemukan.');
+      // Validasi Status (perpanjang hanya untuk kontrak active — FR-12)
+      if (locked.status !== 'active') {
+        throw new ApiError(409, `Kontrak berstatus ${locked.status} tidak dapat diperpanjang. Perpanjangan hanya untuk kontrak aktif.`);
+      }
+      // Validasi Tanggal Akhir Setelah Tanggal Mulai
+      if (endDate && endDate <= locked.start_date) {
+        throw new ApiError(400, 'Tanggal akhir harus setelah tanggal mulai kontrak.');
+      }
+
+      const row = (await client.query(
+        `UPDATE tenancy_contracts SET end_date = $2, updated_at = now()
+         WHERE id = $1
+         RETURNING id, tenant_id, room_id, start_date, end_date, monthly_rate, next_due_date, status, updated_at`,
+        [locked.id, endDate]
+      )).rows[0];
+
+      return { contract: locked, updated: { ...row, tenant_name: locked.tenant_name, room_number: locked.room_number } };
+    });
+
+    res.status(200).json({
+      success: true,
+      message: endDate
+        ? `Kontrak kamar ${updated.room_number} berhasil diperpanjang hingga ${endDate}.`
+        : `Tanggal akhir kontrak kamar ${updated.room_number} dikosongkan (kontrak tanpa batas waktu).`,
+      data: updated,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { create, extend };
