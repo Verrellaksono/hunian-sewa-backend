@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const config = require('../config');
 const ApiError = require('../utils/ApiError');
 
-// Pastikan folder uploads ada (di luar folder publik — NFR-05)
+// Pastikan folder uploads ada (di luar folder publik)
 fs.mkdirSync(config.upload.dir, { recursive: true });
 
 // Nama file acak uuid TANPA ekstensi; ekstensi ditambahkan SETELAH isi file

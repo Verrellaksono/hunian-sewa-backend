@@ -34,7 +34,7 @@ function parseDate(value, label) {
   return value;
 }
 
-// Buat kontrak sewa baru (FR-12)
+// Buat kontrak sewa baru
 async function create(req, res, next) {
   try {
     const { tenant_id, room_id, start_date, duration_months } = req.body || {};
@@ -56,7 +56,7 @@ async function create(req, res, next) {
       if (!Number.isInteger(months) || months < 1) {
         throw new ApiError(400, 'Durasi sewa harus bilangan bulat minimal 1 bulan. Kosongkan untuk sewa rolling tanpa batas waktu.');
       }
-      // end_date = start_date + durasi - 1 hari (selalu sejajar batas periode, tanpa prorata)
+      // end_date = start_date + durasi - 1 hari 
       endDate = addMonths(startDate, months);
       endDate = addDays(endDate, -1);
     }

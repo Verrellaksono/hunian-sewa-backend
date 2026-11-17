@@ -13,7 +13,7 @@ module.exports = {
   },
   jwt: {
     secret: process.env.JWT_SECRET || 'dev-only-secret-ganti-di-produksi',
-    expiresIn: '2h', // FR-01 / NFR-04: token berumur 2 jam
+    expiresIn: '2h', // token berumur 2 jam
   },
   midtrans: {
     serverKey: process.env.MIDTRANS_SERVER_KEY || '',
@@ -21,9 +21,9 @@ module.exports = {
     isProduction: process.env.MIDTRANS_IS_PRODUCTION === 'true',
     webhookUrl: process.env.WEBHOOK_URL || '',
   },
-  // Upload foto tiket (NFR-05): disimpan DI LUAR folder publik, akses via endpoint terotorisasi
+  // Upload foto tiket: disimpan DI LUAR folder publik, akses via endpoint terotorisasi
   upload: {
     dir: path.join(__dirname, 'uploads'),
-    maxFileSize: 2 * 1024 * 1024, // JPEG/PNG maks 2 MB (FR-03)
+    maxFileSize: 2 * 1024 * 1024, // JPEG/PNG maks 2 MB
   },
 };
