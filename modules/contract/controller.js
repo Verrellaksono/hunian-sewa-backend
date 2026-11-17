@@ -1,6 +1,7 @@
 const { withTransaction } = require('../../db');
 const ApiError = require('../../utils/ApiError');
 const { addMonths } = require('../../utils/datetime');
+const { releaseRoom } = require('../../utils/room-status');
 
 // Geser tanggal 'YYYY-MM-DD' n hari (boleh negatif)
 function addDays(dateStr, n) {
@@ -250,7 +251,7 @@ async function terminate(req, res, next) {
       )).rows[0];
 
       // Kamar kembali available (diatur sistem, tidak pernah manual)
-      await client.query(`UPDATE rooms SET status = 'available', updated_at = now() WHERE id = $1`, [locked.room_id]);
+      await releaseRoom(client, locked.room_id);
 
       return { ...updated, tenant_name: locked.tenant_name, room_number: locked.room_number, cancelled_invoices: cancelledInvoices };
     });
