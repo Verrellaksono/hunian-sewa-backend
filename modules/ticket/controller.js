@@ -5,6 +5,7 @@ const { pool } = require('../../db');
 const config = require('../../config');
 const ApiError = require('../../utils/ApiError');
 const { finalizePhotoUpload } = require('../../utils/photo');
+const { paginated } = require('../../utils/pagination');
 
 // Daftar kategori tetap tiket Kerusakan
 const CATEGORIES = ['Listrik', 'Air', 'Internet', 'AC', 'Furnitur', 'Kebersihan', 'Lainnya'];
@@ -130,4 +131,137 @@ async function updateStatus(req, res, next) {
   }
 }
 
-module.exports = { create, updateStatus, CATEGORIES };
+// Kolom tiket + kamar, penyewa & wali
+const TICKET_SELECT = `
+  SELECT t.id, t.contract_id, t.category, t.description, t.photo_path, t.status,
+         t.technical_note, t.resolved_at, t.created_at, t.updated_at,
+         r.room_number, u.name AS tenant_name, c.tenant_id
+  FROM issue_tickets t
+  JOIN tenancy_contracts c ON c.id = t.contract_id
+  JOIN rooms r ON r.id = c.room_id
+  JOIN users u ON u.id = c.tenant_id`;
+
+// Validasi ID 
+function parseId(value, label) {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new ApiError(400, `${label} tidak valid.`);
+  }
+  return n;
+}
+
+// Ambil tiket — owner/caretaker bebas; hanya tenant pelapor; guardian TIDAK boleh melihat tiket
+async function getTicketForUser(req, id) {
+  const ticket = (await pool.query(`${TICKET_SELECT} WHERE t.id = $1`, [id])).rows[0];
+  // Validasi Tiket Ditemukan
+  if (!ticket) throw new ApiError(404, 'Tiket tidak ditemukan.');
+  const allowed =
+    req.user.role === 'owner' ||
+    req.user.role === 'caretaker' ||
+    (req.user.role === 'tenant' && ticket.tenant_id === req.user.id);
+  if (!allowed) throw new ApiError(403, 'Anda tidak berhak mengakses tiket ini.');
+  return ticket;
+}
+
+// Daftar tiket — owner/caretaker semua; tenant miliknya; guardian ditolak
+async function list(req, res, next) {
+  try {
+    // Validasi Role Guardian (tidak berhak melihat tiket kerusakan)
+    if (req.user.role === 'guardian') {
+      throw new ApiError(403, 'Guardian tidak berhak mengakses tiket kerusakan.');
+    }
+    const params = [];
+    let where = '';
+    if (req.user.role !== 'owner' && req.user.role !== 'caretaker') {
+      params.push(req.user.id);
+      where = `WHERE c.tenant_id = $1`;
+    }
+    // Filter status opsional
+    const status = typeof req.query.status === 'string' ? req.query.status : '';
+    if (status) {
+      if (!['pending', 'in_progress', 'resolved'].includes(status)) {
+        throw new ApiError(400, 'Status tidak valid.');
+      }
+      params.push(status);
+      where += `${where ? ' AND ' : ' WHERE '}t.status = $${params.length}`;
+    }
+    const { rows } = await pool.query(
+      `${TICKET_SELECT} ${where} ORDER BY t.created_at DESC, t.id DESC`,
+      params
+    );
+    res.status(200).json({ success: true, ...paginated(rows, rows.length, req.pagination) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Detail satu tiket
+async function getById(req, res, next) {
+  try {
+    const ticket = await getTicketForUser(req, parseId(req.params.id, 'ID tiket'));
+    res.status(200).json({ success: true, data: ticket });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Daftar komentar diskusi tiket 
+async function listComments(req, res, next) {
+  try {
+    const id = parseId(req.params.id, 'ID tiket');
+    await getTicketForUser(req, id);
+    const { rows } = await pool.query(
+      `SELECT k.id, k.ticket_id, k.user_id, k.message, k.created_at,
+              u.name AS user_name, u.role AS user_role
+       FROM ticket_comments k
+       JOIN users u ON u.id = k.user_id
+       WHERE k.ticket_id = $1
+       ORDER BY k.id`,
+      [id]
+    );
+    res.status(200).json({ success: true, ...paginated(rows, rows.length, req.pagination) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Tambah komentar diskusi 
+async function addComment(req, res, next) {
+  try {
+    const id = parseId(req.params.id, 'ID tiket');
+    const { message } = req.body || {};
+
+    // Validasi Pesan
+    if (typeof message !== 'string' || !message.trim()) {
+      throw new ApiError(400, 'Pesan komentar wajib diisi.');
+    }
+    const ticket = await getTicketForUser(req, id);
+    // Validasi Hak Menulis Diskusi
+    const bolehTulis =
+      req.user.role === 'caretaker' ||
+      (req.user.role === 'tenant' && ticket.tenant_id === req.user.id);
+    if (!bolehTulis) {
+      throw new ApiError(403, 'Anda hanya dapat membaca diskusi tiket ini.');
+    }
+
+    const { rows } = await pool.query(
+      `INSERT INTO ticket_comments (ticket_id, user_id, message)
+       VALUES ($1, $2, $3)
+       RETURNING id`,
+      [id, req.user.id, message.trim()]
+    );
+    const comment = (await pool.query(
+      `SELECT k.id, k.ticket_id, k.user_id, k.message, k.created_at,
+              u.name AS user_name, u.role AS user_role
+       FROM ticket_comments k
+       JOIN users u ON u.id = k.user_id
+       WHERE k.id = $1`,
+      [rows[0].id]
+    )).rows[0];
+    res.status(201).json({ success: true, message: 'Komentar berhasil ditambahkan.', data: comment });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { create, updateStatus, list, getById, listComments, addComment, CATEGORIES };
