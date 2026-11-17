@@ -38,7 +38,7 @@ app.use('/api/rooms', require('./modules/room/routes'));
 app.use('/api/announcements', require('./modules/announcement/routes'));
 app.use('/api/contracts', require('./modules/contract/routes'));
 app.use('/api/files', require('./modules/file/routes')); // foto tiket (terotorisasi)
-// app.use('/api/tickets', require('./modules/ticket/routes'));
+app.use('/api/tickets', require('./modules/ticket/routes'));
 // app.use('/api/invoices', require('./modules/billing/routes'));
 // app.use('/api/webhooks', require('./modules/billing/webhook'));
 

@@ -7,7 +7,7 @@ const ApiError = require('./ApiError');
 const JPEG_SIGNATURE = [0xff, 0xd8, 0xff]; // FF D8 FF
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]; // \x89PNG\r\n\x1a\n
 
-// Deteksi jenis gambar dari buffer → 'jpeg' | 'png' | null
+// Deteksi jenis gambar 'jpeg' | 'png' | null
 function detectImageType(buffer) {
   if (
     buffer.length >= JPEG_SIGNATURE.length &&
@@ -36,16 +36,14 @@ async function detectImageTypeFromFile(filePath) {
 }
 
 // Finalisasi foto upload multer:
-// - tolak (hapus file + 400) bila isi bukan JPEG/PNG asli
-// - ganti nama sementara (uuid) menjadi <uuid>.jpg / <uuid>.png sesuai isi asli
 // Kembalikan nama file final untuk disimpan ke kolom issue_tickets.photo_path
 async function finalizePhotoUpload(file) {
-  if (!file) return null; // foto opsional (FR-03)
+  if (!file) return null; // foto opsional
 
   try {
     const type = await detectImageTypeFromFile(file.path);
     if (!type) {
-      await fs.unlink(file.path).catch(() => {});
+      await fs.unlink(file.path).catch(() => { });
       throw new ApiError(400, 'Isi file bukan foto JPEG/PNG yang valid.');
     }
 
@@ -60,9 +58,9 @@ async function finalizePhotoUpload(file) {
 
     return finalName;
   } catch (err) {
-    // Gagal di luar validasi (mis. I/O) — buang file sementara lalu teruskan error
+    // Gagal di luar validasi, buang file sementara lalu teruskan error
     if (!(err instanceof ApiError)) {
-      await fs.unlink(file.path).catch(() => {});
+      await fs.unlink(file.path).catch(() => { });
     }
     throw err;
   }
