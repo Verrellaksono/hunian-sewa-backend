@@ -8,6 +8,13 @@ function todayWIB() {
   }).format(new Date());
 }
 
+// Geser tanggal 'YYYY-MM-DD' n hari (boleh negatif)
+function addDays(dateStr, n) {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d) + n * 86400000);
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+}
+
 // Tambah n bulan (penjepitan akhir bulan: 31 Jan + 1 bln → 28/29 Feb)
 function addMonths(dateStr, n) {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -37,4 +44,4 @@ function nowWIB() {
   }).format(new Date());
 }
 
-module.exports = { WIB, todayWIB, addMonths, daysBetween, formatRupiah, nowWIB };
+module.exports = { WIB, todayWIB, addMonths, addDays, daysBetween, formatRupiah, nowWIB };
