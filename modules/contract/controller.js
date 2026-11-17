@@ -1,7 +1,8 @@
-const { withTransaction } = require('../../db');
+const { pool, withTransaction } = require('../../db');
 const ApiError = require('../../utils/ApiError');
 const { addMonths } = require('../../utils/datetime');
 const { releaseRoom } = require('../../utils/room-status');
+const { paginated } = require('../../utils/pagination');
 
 // Geser tanggal 'YYYY-MM-DD' n hari (boleh negatif)
 function addDays(dateStr, n) {
@@ -267,4 +268,52 @@ async function terminate(req, res, next) {
   }
 }
 
-module.exports = { create, extend, terminate };
+// Kolom kontrak + nama kamar & penyewa (dipakai ulang beberapa endpoint)
+const CONTRACT_SELECT = `
+  SELECT c.id, c.tenant_id, c.room_id, c.start_date, c.end_date, c.monthly_rate,
+         c.next_due_date, c.status, c.terminated_at, c.created_at, c.updated_at,
+         r.room_number, u.name AS tenant_name
+  FROM tenancy_contracts c
+  JOIN rooms r ON r.id = c.room_id
+  JOIN users u ON u.id = c.tenant_id`;
+
+// Daftar kontrak milik tenant (atau milik anak asuh, bagi guardian)
+async function listMine(req, res, next) {
+  try {
+    const { rows } = await pool.query(
+      `${CONTRACT_SELECT}
+       WHERE c.tenant_id = $1 OR u.guardian_id = $1
+       ORDER BY c.id DESC`,
+      [req.user.id]
+    );
+    res.status(200).json({ success: true, ...paginated(rows, rows.length, req.pagination) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Detail satu kontrak dengan cek kepemilikan (owner/caretaker bebas, tenant/guardian hanya miliknya)
+async function getById(req, res, next) {
+  try {
+    const contract = (await pool.query(
+      `${CONTRACT_SELECT} WHERE c.id = $1`,
+      [parseId(req.params.id, 'ID kontrak')]
+    )).rows[0];
+    // Validasi Kontrak Ditemukan
+    if (!contract) throw new ApiError(404, 'Kontrak tidak ditemukan.');
+
+    // Validasi Kepemilikan (tenant/guardian hanya boleh kontrak miliknya)
+    if (!['owner', 'caretaker'].includes(req.user.role)) {
+      const ward = (await pool.query(`SELECT guardian_id FROM users WHERE id = $1`, [contract.tenant_id])).rows[0];
+      if (contract.tenant_id !== req.user.id && ward.guardian_id !== req.user.id) {
+        throw new ApiError(403, 'Anda tidak memiliki akses ke kontrak ini.');
+      }
+    }
+
+    res.status(200).json({ success: true, data: contract });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { create, extend, terminate, listMine, getById };
