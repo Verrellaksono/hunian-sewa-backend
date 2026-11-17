@@ -66,4 +66,68 @@ async function create(req, res, next) {
   }
 }
 
-module.exports = { create, CATEGORIES };
+// Validasi ID numerik positif dari parameter URL
+function parseId(value, label) {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new ApiError(400, `${label} tidak valid.`);
+  }
+  return n;
+}
+
+// Perbarui status tiket oleh caretaker
+async function updateStatus(req, res, next) {
+  try {
+    const { status, technical_note } = req.body || {};
+    const id = parseId(req.params.id, 'ID tiket');
+
+    // Validasi Status Baru
+    if (status !== 'in_progress' && status !== 'resolved') {
+      throw new ApiError(400, "Status baru harus 'in_progress' atau 'resolved'.");
+    }
+    // Validasi Catatan Teknis (wajib pada setiap perubahan status)
+    if (typeof technical_note !== 'string' || !technical_note.trim()) {
+      throw new ApiError(400, 'technical_note wajib diisi pada setiap perubahan status.');
+    }
+
+    // Status asal yang sah untuk transisi ini (alur satu arah)
+    const expectedFrom = status === 'in_progress' ? 'pending' : 'in_progress';
+    const updated = await pool.query(
+      `UPDATE issue_tickets
+       SET status = $3::varchar,
+           technical_note = $4,
+           resolved_at = CASE WHEN $3::varchar = 'resolved' THEN now() ELSE NULL END,
+           resolved_by = CASE WHEN $3::varchar = 'resolved' THEN $5::bigint ELSE NULL END,
+           updated_at = now()
+       WHERE id = $1 AND status = $2
+       RETURNING id`,
+      [id, expectedFrom, status, technical_note.trim(), req.user.id]
+    );
+    if (updated.rows.length === 0) {
+      // Bedakan: tiket tidak ada (404) vs alur status melompat/mundur (409)
+      const existing = (await pool.query(`SELECT status FROM issue_tickets WHERE id = $1`, [id])).rows[0];
+      if (!existing) throw new ApiError(404, 'Tiket tidak ditemukan.');
+      if (existing.status === 'resolved') {
+        throw new ApiError(409, 'Tiket sudah resolved (final, tidak bisa dibuka lagi). Masalah baru silakan buat tiket baru.');
+      }
+      throw new ApiError(409, `Perubahan status tidak sesuai alur: pending → in_progress → resolved (status saat ini: ${existing.status}).`);
+    }
+
+    // Detail tiket terbaru + nomor kamar & penyewa via join
+    const ticket = (await pool.query(
+      `SELECT t.id, t.contract_id, t.category, t.description, t.photo_path, t.status,
+              t.technical_note, t.resolved_at, t.created_at, t.updated_at, r.room_number, u.name AS tenant_name
+       FROM issue_tickets t
+       JOIN tenancy_contracts c ON c.id = t.contract_id
+       JOIN rooms r ON r.id = c.room_id
+       JOIN users u ON u.id = c.tenant_id
+       WHERE t.id = $1`,
+      [id]
+    )).rows[0];
+    res.status(200).json({ success: true, message: 'Status tiket berhasil diperbarui.', data: ticket });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { create, updateStatus, CATEGORIES };

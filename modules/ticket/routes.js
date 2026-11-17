@@ -10,5 +10,7 @@ const router = express.Router();
 
 // Buat tiket kerusakan
 router.post('/', auth, requireRole('tenant'), requireActiveContract, uploadTicketPhoto, controller.create);
+// Perbarui status tiket
+router.patch('/:id/status', auth, requireRole('caretaker'), controller.updateStatus);
 
 module.exports = router;
