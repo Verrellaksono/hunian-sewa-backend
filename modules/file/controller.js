@@ -14,7 +14,7 @@ async function show(req, res, next) {
   try {
     const filename = String(req.params.filename || '').toLowerCase();
 
-    // Validasi Nama File (uuid + ekstensi)
+    // Validasi Nama File (uuid dan ekstensi)
     if (!FILENAME_PATTERN.test(filename)) {
       throw new ApiError(400, 'Nama file foto tidak valid.');
     }

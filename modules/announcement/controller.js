@@ -10,7 +10,7 @@ async function list(req, res, next) {
     // Query hitung total
     const total = Number((await pool.query(`SELECT count(*) AS n FROM announcements`)).rows[0].n);
 
-    // Query data halaman + nama penulis
+    // Query data halaman dan nama penulis
     const params = [req.pagination.limit, req.pagination.offset];
     const { rows } = await pool.query(
       `SELECT a.id, a.title, a.content, a.category, a.published_at, a.updated_at,

@@ -13,7 +13,7 @@ async function list(req, res, next) {
       throw new ApiError(400, `Filter status harus salah satu dari: ${VALID_STATUS.join(', ')}.`);
     }
 
-    // Query dasar + filter status bila diberikan
+    // Query dasar, ditambah filter status bila diberikan
     const where = [];
     const params = [];
     if (status) {

@@ -10,7 +10,7 @@ const VALID_ROLES = ['owner', 'caretaker', 'tenant', 'guardian'];
 // Lihat profil sendiri
 async function getMe(req, res, next) {
   try {
-    // Query ambil profil + info wali
+    // Query ambil profil dan info wali
     const { rows } = await withTransaction((client) =>
       client.query(
         `SELECT u.id, u.name, u.email, u.phone, u.role, u.guardian_id, u.is_active, u.created_at,
@@ -172,7 +172,7 @@ async function registerAccount(req, res, next) {
   }
 }
 
-// Daftar pengguna (paginasi + filter peran)
+// Daftar pengguna (paginasi dan filter peran)
 async function listUsers(req, res, next) {
   try {
     const role = req.query.role;
@@ -203,7 +203,7 @@ async function listUsers(req, res, next) {
       (await pool.query(`SELECT count(*) AS n FROM users u ${whereSql}`, params)).rows[0].n
     );
 
-    // Query data halaman + info wali
+    // Query data halaman dan info wali
     params.push(req.pagination.limit, req.pagination.offset);
     const { rows } = await pool.query(
       `SELECT u.id, u.name, u.email, u.phone, u.role, u.guardian_id, u.is_active, u.created_at,
@@ -221,7 +221,7 @@ async function listUsers(req, res, next) {
   }
 }
 
-// Cari akun untuk dikelola + validasi hak actor
+// Cari akun untuk dikelola, termasuk validasi hak actor
 async function findManageableAccount(req, id) {
   // Query cari akun target
   const target = (await pool.query(

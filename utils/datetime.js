@@ -15,7 +15,7 @@ function addDays(dateStr, n) {
   return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
 }
 
-// Tambah n bulan (penjepitan akhir bulan: 31 Jan + 1 bln → 28/29 Feb)
+// Tambah n bulan (penjepitan akhir bulan: 31 Jan ditambah 1 bln jadi 28/29 Feb)
 function addMonths(dateStr, n) {
   const [y, m, d] = dateStr.split('-').map(Number);
   const base = new Date(Date.UTC(y, m - 1 + n, 1));

@@ -1,4 +1,4 @@
-// Kamar diisi penyewa: dipanggil saat kontrak pending → active (invoice pertama lunas)
+// Kamar diisi penyewa: dipanggil saat kontrak berubah dari pending ke active (invoice pertama lunas)
 async function occupyRoom(client, roomId) {
   const row = (await client.query(
     `UPDATE rooms SET status = 'occupied', updated_at = now()

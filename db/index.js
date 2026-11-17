@@ -1,7 +1,7 @@
 const { Pool, types } = require('pg');
 const config = require('../config');
 
-// Kolom DATE dikembalikan apa adanya sebagai 'YYYY-MM-DD' (bukan objek Date + zona waktu server)
+// Kolom DATE dikembalikan apa adanya sebagai 'YYYY-MM-DD' (bukan objek Date dengan zona waktu server)
 types.setTypeParser(1082, (value) => value);
 
 // Pool koneksi PostgreSQL — query selalu parameterized (NFR, anti SQL injection)

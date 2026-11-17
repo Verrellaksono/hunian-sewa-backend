@@ -1,5 +1,6 @@
 const ApiError = require('../../utils/ApiError');
 const { addMonths, addDays } = require('../../utils/datetime');
+const { occupyRoom } = require('../../utils/room-status');
 
 // Terbitkan SATU invoice bulanan untuk kontrak.
 async function issueInvoice(contract, client) {
@@ -47,10 +48,72 @@ async function issueInvoice(contract, client) {
 
     return inv;
   } catch (err) {
-    // (contract_id, period_start) atau invoice_number sudah ada → anggap sudah terbit
+    // (contract_id, period_start) atau invoice_number sudah ada, anggap sudah terbit
     if (err.code === '23505') return null;
     throw err;
   }
 }
 
-module.exports = { issueInvoice };
+// Settlement atomik: payment settlement, invoice lunas, next_due_date maju 1 bulan,
+// kontrak pending ke active, kamar occupied. WAJIB dipanggil dalam transaksi (param client).
+// return { applied: true } bila perubahan diterapkan; { applied: false } bila payment sudah settlement.
+async function settlePayment({ paymentId, paymentType, transactionId, payload }, client) {
+  if (!client) throw new Error('settlePayment wajib dipanggil dalam transaksi (param client).');
+
+  // Kunci payment: notifikasi serentak tidak boleh memproses ulang
+  const pay = (await client.query(
+    `SELECT id, invoice_id, status FROM payments WHERE id = $1 FOR UPDATE`,
+    [paymentId]
+  )).rows[0];
+  if (!pay) return { applied: false };
+  if (pay.status === 'settlement') return { applied: false };
+
+  await client.query(
+    `UPDATE payments
+     SET status = 'settlement',
+         paid_at = COALESCE(paid_at, now()),
+         payment_method = COALESCE($2, payment_method),
+         gateway_transaction_id = COALESCE($3, gateway_transaction_id),
+         gateway_payload = $4,
+         updated_at = now()
+     WHERE id = $1`,
+    [paymentId, paymentType, transactionId, payload]
+  );
+
+  // Invoice lunas — hanya bila masih unpaid/pending (invoice cancelled tidak ikut lunas).
+  // Bila invoice sudah paid (payment lain lebih dulu), siklus kontrak TIDAK diulang.
+  const inv = (await client.query(
+    `UPDATE invoices
+     SET status = 'paid', paid_at = COALESCE(paid_at, now())
+     WHERE id = $1 AND status IN ('unpaid', 'pending')
+     RETURNING contract_id`,
+    [pay.invoice_id]
+  )).rows[0];
+
+  if (inv) {
+    const c = (await client.query(
+      `SELECT id, room_id, status, next_due_date FROM tenancy_contracts WHERE id = $1 FOR UPDATE`,
+      [inv.contract_id]
+    )).rows[0];
+    // Kontrak completed/terminated tidak dilanjutkan siklus sewanya
+    if (c && (c.status === 'pending' || c.status === 'active') && c.next_due_date) {
+      const newDue = addMonths(c.next_due_date, 1);
+      if (c.status === 'pending') {
+        await client.query(
+          `UPDATE tenancy_contracts SET status = 'active', next_due_date = $2, updated_at = now() WHERE id = $1`,
+          [c.id, newDue]
+        );
+        await occupyRoom(client, c.room_id);
+      } else {
+        await client.query(
+          `UPDATE tenancy_contracts SET next_due_date = $2, updated_at = now() WHERE id = $1`,
+          [c.id, newDue]
+        );
+      }
+    }
+  }
+
+  return { applied: true };
+}
+
+module.exports = { issueInvoice, settlePayment };

@@ -5,8 +5,9 @@ const config = require('../../config');
 const ApiError = require('../../utils/ApiError');
 const { paginated } = require('../../utils/pagination');
 const { createSnapTransaction } = require('./gateway');
+const { settlePayment } = require('./service');
 
-// Kolom invoice + kamar & penyewa (dipakai ulang list & detail)
+// Kolom invoice, ditambah kamar & penyewa (dipakai ulang list & detail)
 const INVOICE_SELECT = `
   SELECT i.id, i.invoice_number, i.contract_id, i.period_start, i.period_end, i.due_date,
          i.amount, i.status, i.issued_at, i.paid_at,
@@ -55,7 +56,7 @@ async function list(req, res, next) {
   }
 }
 
-// Detail invoice + items + riwayat upaya bayar (semua status payment, terbaru dulu)
+// Detail invoice, items, dan riwayat upaya bayar (semua status payment, terbaru dulu)
 async function getById(req, res, next) {
   try {
     const invoice = await getInvoiceForUser(req, parseId(req.params.id, 'ID invoice'));
@@ -139,13 +140,13 @@ async function pay(req, res, next) {
         itemDetails: [{ id: 'RENT', price: invoice.amount, quantity: 1, name: 'Sewa kamar' }],
       });
     } catch (err) {
-      // Gateway gagal → TANPA record: payment dihapus + invoice kembali unpaid
+      // Gateway gagal: TANPA record, payment dihapus dan invoice kembali unpaid
       await pool.query(`DELETE FROM payments WHERE id = $1`, [payment.id]);
       await pool.query(`UPDATE invoices SET status = 'unpaid' WHERE id = $1 AND status = 'pending'`, [invoice.id]);
       throw err;
     }
 
-    // Simpan payment_url + token gateway
+    // Simpan payment_url dan token gateway
     const updated = (await pool.query(
       `UPDATE payments
        SET payment_url = $2, gateway_transaction_id = $3, updated_at = now()
@@ -164,7 +165,7 @@ async function pay(req, res, next) {
   }
 }
 
-// Pemetaan transaction_status (+fraud_status) Midtrans → kolom payments.status
+// Pemetaan transaction_status dan fraud_status Midtrans ke kolom payments.status
 function mapTransactionStatus(transactionStatus, fraudStatus) {
   if (transactionStatus === 'capture') {
     if (fraudStatus === 'accept') return 'settlement';
@@ -219,7 +220,7 @@ async function handlePayment(req, res, next) {
       throw new ApiError(400, 'Notifikasi pembayaran tidak lengkap.');
     }
 
-    // Validasi Signature: SHA512(order_id + status_code + gross_amount + server_key)
+    // Validasi Signature: SHA512 dari order_id, status_code, gross_amount, dan server_key
     const expected = crypto
       .createHash('sha512')
       .update(`${order_id}${status_code}${gross_amount}${config.midtrans.serverKey}`)
@@ -246,26 +247,39 @@ async function handlePayment(req, res, next) {
       throw new ApiError(400, `Status transaksi tidak dikenal: ${transaction_status}`);
     }
 
-    // Idempotent: sudah settlement → OK tanpa proses ulang
+    // Idempotent: sudah settlement, OK tanpa proses ulang
     if (payment.status === 'settlement') {
       return res.status(200).json({ success: true, message: 'Pembayaran sudah diproses sebelumnya.' });
     }
-    // Status tidak berubah (mis. pending → pending) → OK tanpa menulis ulang
+    // Status tidak berubah (mis. pending ke pending), OK tanpa menulis ulang
     if (payment.status === newStatus) {
       return res.status(200).json({ success: true, message: 'Status pembayaran tidak berubah.' });
     }
 
-    await pool.query(
-      `UPDATE payments
-       SET status = $2::varchar,
-           payment_method = COALESCE($3, payment_method),
-           gateway_transaction_id = COALESCE($4, gateway_transaction_id),
-           paid_at = CASE WHEN $2::varchar = 'settlement' THEN COALESCE(paid_at, now()) ELSE paid_at END,
-           gateway_payload = $5,
-           updated_at = now()
-       WHERE id = $1`,
-      [payment.id, newStatus, payment_type || null, transaction_id || null, req.body]
-    );
+    // Settlement: transaksi atomik, payment, invoice lunas, next_due_date, kontrak active, kamar occupied
+    let settleResult = null;
+    if (newStatus === 'settlement') {
+      settleResult = await withTransaction((client) =>
+        settlePayment(
+          { paymentId: payment.id, paymentType: payment_type || null, transactionId: transaction_id || null, payload: req.body },
+          client
+        )
+      );
+      if (!settleResult.applied) {
+        return res.status(200).json({ success: true, message: 'Pembayaran sudah diproses sebelumnya.' });
+      }
+    } else {
+      await pool.query(
+        `UPDATE payments
+         SET status = $2::varchar,
+             payment_method = COALESCE($3, payment_method),
+             gateway_transaction_id = COALESCE($4, gateway_transaction_id),
+             gateway_payload = $5,
+             updated_at = now()
+         WHERE id = $1`,
+        [payment.id, newStatus, payment_type || null, transaction_id || null, req.body]
+      );
+    }
 
     res.status(200).json({
       success: true,

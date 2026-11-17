@@ -56,7 +56,7 @@ async function create(req, res, next) {
       if (!Number.isInteger(months) || months < 1) {
         throw new ApiError(400, 'Durasi sewa harus bilangan bulat minimal 1 bulan. Kosongkan untuk sewa rolling tanpa batas waktu.');
       }
-      // end_date = start_date + durasi - 1 hari 
+      // end_date: jumlahkan durasi dari start_date, kurangi 1 hari
       endDate = addMonths(startDate, months);
       endDate = addDays(endDate, -1);
     }
@@ -250,7 +250,7 @@ async function terminate(req, res, next) {
         [locked.id]
       )).rowCount;
 
-      // Kontrak → terminated + terminated_at
+      // Kontrak menjadi terminated, tercatat terminated_at
       const updated = (await client.query(
         `UPDATE tenancy_contracts SET status = 'terminated', terminated_at = now(), updated_at = now()
           WHERE id = $1
@@ -275,7 +275,7 @@ async function terminate(req, res, next) {
   }
 }
 
-// Kolom kontrak + nama kamar & penyewa (dipakai ulang beberapa endpoint)
+// Kolom kontrak, ditambah kamar & penyewa (dipakai ulang beberapa endpoint)
 const CONTRACT_SELECT = `
   SELECT c.id, c.tenant_id, c.room_id, c.start_date, c.end_date, c.monthly_rate,
          c.next_due_date, c.status, c.terminated_at, c.created_at, c.updated_at,

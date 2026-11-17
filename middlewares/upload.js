@@ -26,7 +26,7 @@ const upload = multer({
   },
 });
 
-// Terima SATU foto tiket dari field 'photo', rapikan error multer → pesan jelas,
+// Terima SATU foto tiket dari field 'photo', rapikan error multer jadi pesan jelas,
 // dan bersihkan file yatim bila request pada akhirnya gagal (status >= 400)
 function uploadTicketPhoto(req, res, next) {
   upload.single('photo')(req, res, (err) => {
