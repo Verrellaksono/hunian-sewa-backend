@@ -17,6 +17,25 @@ const INVOICE_SELECT = `
   JOIN rooms r ON r.id = c.room_id
   JOIN users u ON u.id = c.tenant_id`;
 
+// Kolom payment rekap, ditambah invoice, kontrak, kamar, penyewa & pembayar
+const PAYMENT_SELECT = `
+  SELECT p.id, p.order_id, p.status, p.gross_amount, p.payment_method,
+         p.gateway_transaction_id, p.paid_at, p.expires_at, p.created_at,
+         i.id AS invoice_id, i.invoice_number, i.period_start, i.period_end, i.due_date,
+         i.amount AS invoice_amount, i.status AS invoice_status,
+         c.id AS contract_id, r.room_number,
+         t.id AS tenant_id, t.name AS tenant_name,
+         py.id AS payer_id, py.name AS payer_name
+  FROM payments p
+  JOIN invoices i ON i.id = p.invoice_id
+  JOIN tenancy_contracts c ON c.id = i.contract_id
+  JOIN rooms r ON r.id = c.room_id
+  JOIN users t ON t.id = c.tenant_id
+  JOIN users py ON py.id = p.payer_id`;
+
+// Status payment yang diperbolehkan sebagai filter
+const PAYMENT_STATUSES = ['pending', 'settlement', 'expire', 'deny', 'failure', 'cancel'];
+
 // Validasi ID numerik
 function parseId(value, label) {
   const n = Number(value);
@@ -291,4 +310,54 @@ async function handlePayment(req, res, next) {
   }
 }
 
-module.exports = { list, getById, pay, handlePayment, mapTransactionStatus };
+// Rekap upaya pembayaran sesuai scope role (owner semua; tenant/guardian miliknya).
+async function rekap(req, res, next) {
+  try {
+    const params = [];
+    const where = [];
+    if (req.user.role === 'tenant') {
+      params.push(req.user.id);
+      where.push(`c.tenant_id = $1`);
+    } else if (req.user.role === 'guardian') {
+      params.push(req.user.id);
+      where.push(`t.guardian_id = $1`);
+    }
+
+    // Filter periode sewa, format YYYY-MM
+    if (req.query.periode !== undefined) {
+      if (!/^\d{4}-\d{2}$/.test(req.query.periode)) {
+        throw new ApiError(400, 'Filter periode harus format YYYY-MM.');
+      }
+      params.push(req.query.periode);
+      where.push(`to_char(i.period_start, 'YYYY-MM') = $${params.length}`);
+    }
+
+    // Filter status payment
+    if (req.query.status !== undefined) {
+      if (!PAYMENT_STATUSES.includes(req.query.status)) {
+        throw new ApiError(400, 'Status tidak valid.');
+      }
+      params.push(req.query.status);
+      where.push(`p.status = $${params.length}`);
+    }
+
+    const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    // Query hitung total
+    const total = Number(
+      (await pool.query(`SELECT count(*) AS n FROM payments p JOIN invoices i ON i.id = p.invoice_id JOIN tenancy_contracts c ON c.id = i.contract_id JOIN users t ON t.id = c.tenant_id ${clause}`, params)).rows[0].n
+    );
+
+    // Query data halaman
+    params.push(req.pagination.limit, req.pagination.offset);
+    const { rows } = await pool.query(
+      `${PAYMENT_SELECT} ${clause} ORDER BY p.created_at DESC, p.id DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+    res.status(200).json({ success: true, ...paginated(rows, total, req.pagination) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { list, getById, pay, handlePayment, mapTransactionStatus, rekap };
