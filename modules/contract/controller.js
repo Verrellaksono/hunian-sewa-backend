@@ -172,11 +172,11 @@ async function extend(req, res, next) {
       // Kunci baris kontrak
       const locked = (await client.query(
         `SELECT c.id, c.status, c.start_date, c.end_date, r.room_number, u.name AS tenant_name
-         FROM tenancy_contracts c
-         JOIN rooms r ON r.id = c.room_id
-         JOIN users u ON u.id = c.tenant_id
-         WHERE c.id = $1
-         FOR UPDATE OF c LIMIT 1`,
+          FROM tenancy_contracts c
+          JOIN rooms r ON r.id = c.room_id
+          JOIN users u ON u.id = c.tenant_id
+          WHERE c.id = $1
+          FOR UPDATE OF c LIMIT 1`,
         [parseId(req.params.id, 'ID kontrak')]
       )).rows[0];
       // Validasi Kontrak Ditemukan
@@ -192,8 +192,8 @@ async function extend(req, res, next) {
 
       const row = (await client.query(
         `UPDATE tenancy_contracts SET end_date = $2, updated_at = now()
-         WHERE id = $1
-         RETURNING id, tenant_id, room_id, start_date, end_date, monthly_rate, next_due_date, status, updated_at`,
+          WHERE id = $1
+          RETURNING id, tenant_id, room_id, start_date, end_date, monthly_rate, next_due_date, status, updated_at`,
         [locked.id, endDate]
       )).rows[0];
 
@@ -212,4 +212,58 @@ async function extend(req, res, next) {
   }
 }
 
-module.exports = { create, extend };
+// Akhiri kontrak (FR-12): terminated, kamar kembali available, invoice belum lunas dibatalkan
+async function terminate(req, res, next) {
+  try {
+    const result = await withTransaction(async (client) => {
+      // Kunci baris kontrak
+      const locked = (await client.query(
+        `SELECT c.id, c.status, c.room_id, r.room_number, u.name AS tenant_name
+          FROM tenancy_contracts c
+          JOIN rooms r ON r.id = c.room_id
+          JOIN users u ON u.id = c.tenant_id
+          WHERE c.id = $1
+          FOR UPDATE OF c LIMIT 1`,
+        [parseId(req.params.id, 'ID kontrak')]
+      )).rows[0];
+      // Validasi Kontrak Ditemukan
+      if (!locked) throw new ApiError(404, 'Kontrak tidak ditemukan.');
+      // Validasi Status (hanya pending/active yang masih bisa diakhiri)
+      if (!['pending', 'active'].includes(locked.status)) {
+        throw new ApiError(409, `Kontrak berstatus ${locked.status} tidak dapat diakhiri.`);
+      }
+
+      // Batalkan semua invoice belum lunas (unpaid = tagihan menganggur, pending = pembayaran sedang berjalan)
+      const cancelledInvoices = (await client.query(
+        `UPDATE invoices SET status = 'cancelled', paid_at = NULL
+          WHERE contract_id = $1 AND status IN ('unpaid', 'pending')
+          RETURNING id`,
+        [locked.id]
+      )).rowCount;
+
+      // Kontrak → terminated + terminated_at
+      const updated = (await client.query(
+        `UPDATE tenancy_contracts SET status = 'terminated', terminated_at = now(), updated_at = now()
+          WHERE id = $1
+          RETURNING id, tenant_id, room_id, start_date, end_date, monthly_rate, next_due_date, status, terminated_at, updated_at`,
+        [locked.id]
+      )).rows[0];
+
+      // Kamar kembali available (diatur sistem, tidak pernah manual)
+      await client.query(`UPDATE rooms SET status = 'available', updated_at = now() WHERE id = $1`, [locked.room_id]);
+
+      return { ...updated, tenant_name: locked.tenant_name, room_number: locked.room_number, cancelled_invoices: cancelledInvoices };
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Kontrak kamar ${result.room_number} atas nama ${result.tenant_name} berhasil diakhiri. Kamar kembali tersedia.`
+        + (result.cancelled_invoices > 0 ? ` ${result.cancelled_invoices} invoice belum lunas dibatalkan.` : ''),
+      data: result,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { create, extend, terminate };

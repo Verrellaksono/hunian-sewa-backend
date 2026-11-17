@@ -10,5 +10,7 @@ const router = express.Router();
 router.post('/', auth, requireRole('owner', 'caretaker'), controller.create);
 // Perpanjang kontrak (caretaker & owner)
 router.patch('/:id', auth, requireRole('owner', 'caretaker'), controller.extend);
+// Akhiri kontrak (caretaker & owner)
+router.post('/:id/terminate', auth, requireRole('owner', 'caretaker'), controller.terminate);
 
 module.exports = router;
