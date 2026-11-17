@@ -7,9 +7,11 @@ const controller = require('./controller');
 
 const router = express.Router();
 
-// Daftar invoice — caretaker TIDAK BOLEH lihat invoice (matriks hak akses)
+// Daftar invoice
 router.get('/', auth, requireRole('owner', 'tenant', 'guardian'), pagination, controller.list);
 // Detail invoice + items + riwayat upaya bayar
 router.get('/:id', auth, requireRole('owner', 'tenant', 'guardian'), controller.getById);
+// Mulai pembayaran (tenant, guardian)
+router.post('/:id/pay', auth, requireRole('tenant', 'guardian'), controller.pay);
 
 module.exports = router;

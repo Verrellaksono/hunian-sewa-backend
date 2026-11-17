@@ -1,6 +1,8 @@
-const { pool } = require('../../db');
+const { pool, withTransaction } = require('../../db');
+const config = require('../../config');
 const ApiError = require('../../utils/ApiError');
 const { paginated } = require('../../utils/pagination');
+const { createSnapTransaction } = require('./gateway');
 
 // Kolom invoice + kamar & penyewa (dipakai ulang list & detail)
 const INVOICE_SELECT = `
@@ -71,4 +73,93 @@ async function getById(req, res, next) {
   }
 }
 
-module.exports = { list, getById };
+// Mulai pembayaran invoice 
+async function pay(req, res, next) {
+  try {
+    const id = parseId(req.params.id, 'ID invoice');
+    const invoice = await getInvoiceForUser(req, id);
+
+    // Validasi Role Pembayar
+    if (req.user.role === 'owner') {
+      throw new ApiError(403, 'Owner tidak dapat membayar invoice.');
+    }
+    // Validasi Status Invoice (hanya unpaid/pending)
+    if (invoice.status === 'paid') throw new ApiError(409, 'Invoice sudah lunas.');
+    if (invoice.status === 'cancelled') throw new ApiError(409, 'Invoice sudah dibatalkan.');
+
+    // Jika Payment pending masih hidup, pakai ulang payment_url yang sama
+    const existing = (await pool.query(
+      `SELECT order_id, payment_url, expires_at FROM payments
+       WHERE invoice_id = $1 AND status = 'pending' AND expires_at > now()
+       LIMIT 1`,
+      [invoice.id]
+    )).rows[0];
+    if (existing?.payment_url) {
+      return res.status(200).json({
+        success: true,
+        message: 'Pembayaran masih menunggu dilunasi.',
+        data: { order_id: existing.order_id, payment_url: existing.payment_url, status: 'pending', expires_at: existing.expires_at, reused: true },
+      });
+    }
+
+    // order_id unik; kedaluwarsa 60 menit
+    const orderId = `PAY-${invoice.id}-${Date.now()}`;
+    const payment = await withTransaction(async (client) => {
+      // Kunci invoice; status bisa berubah sejak cek pertama
+      const locked = (await client.query(`SELECT status FROM invoices WHERE id = $1 FOR UPDATE`, [invoice.id])).rows[0];
+      if (!locked || locked.status === 'paid' || locked.status === 'cancelled') {
+        throw new ApiError(409, 'Invoice sudah tidak dapat dibayar.');
+      }
+      // Payment pending yang sudah kedaluwarsa, tandai expire
+      await client.query(
+        `UPDATE payments SET status = 'expire', updated_at = now()
+         WHERE invoice_id = $1 AND status = 'pending' AND expires_at <= now()`,
+        [invoice.id]
+      );
+      const row = (await client.query(
+        `INSERT INTO payments (invoice_id, payer_id, order_id, gross_amount, expires_at)
+         VALUES ($1, $2, $3, $4, now() + interval '60 minutes')
+         RETURNING id, order_id, status, gross_amount, expires_at`,
+        [invoice.id, req.user.id, orderId, invoice.amount]
+      )).rows[0];
+      // Invoice ikut menunggu pembayaran
+      await client.query(`UPDATE invoices SET status = 'pending' WHERE id = $1 AND status = 'unpaid'`, [invoice.id]);
+      return row;
+    });
+
+    // Panggil gateway DI LUAR transaksi
+    let snap;
+    try {
+      snap = await createSnapTransaction({
+        orderId,
+        grossAmount: invoice.amount,
+        customerName: req.user.name,
+        itemDetails: [{ id: 'RENT', price: invoice.amount, quantity: 1, name: 'Sewa kamar' }],
+      });
+    } catch (err) {
+      // Gateway gagal → TANPA record: payment dihapus + invoice kembali unpaid
+      await pool.query(`DELETE FROM payments WHERE id = $1`, [payment.id]);
+      await pool.query(`UPDATE invoices SET status = 'unpaid' WHERE id = $1 AND status = 'pending'`, [invoice.id]);
+      throw err;
+    }
+
+    // Simpan payment_url + token gateway
+    const updated = (await pool.query(
+      `UPDATE payments
+       SET payment_url = $2, gateway_transaction_id = $3, updated_at = now()
+       WHERE id = $1
+       RETURNING id, order_id, status, payment_url, gateway_transaction_id, gross_amount, expires_at`,
+      [payment.id, snap.paymentUrl, snap.token]
+    )).rows[0];
+
+    res.status(201).json({ success: true, message: 'Transaksi pembayaran dibuat. Selesaikan pembayaran sebelum kedaluwarsa.', data: updated });
+  } catch (err) {
+    // Melanggar partial unique (payment pending ganda oleh request serentak)
+    if (err.code === '23505') {
+      return next(new ApiError(409, 'Sudah ada pembayaran yang sedang berjalan untuk invoice ini.'));
+    }
+    next(err);
+  }
+}
+
+module.exports = { list, getById, pay };
