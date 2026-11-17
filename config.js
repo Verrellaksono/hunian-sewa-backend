@@ -1,5 +1,7 @@
 require('dotenv').config();
 
+const path = require('path');
+
 module.exports = {
   port: parseInt(process.env.PORT || '3000', 10),
   db: {
@@ -18,5 +20,10 @@ module.exports = {
     clientKey: process.env.MIDTRANS_CLIENT_KEY || '',
     isProduction: process.env.MIDTRANS_IS_PRODUCTION === 'true',
     webhookUrl: process.env.WEBHOOK_URL || '',
+  },
+  // Upload foto tiket (NFR-05): disimpan DI LUAR folder publik, akses via endpoint terotorisasi
+  upload: {
+    dir: path.join(__dirname, 'uploads'),
+    maxFileSize: 2 * 1024 * 1024, // JPEG/PNG maks 2 MB (FR-03)
   },
 };
