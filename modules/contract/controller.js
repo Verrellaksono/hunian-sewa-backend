@@ -3,6 +3,7 @@ const ApiError = require('../../utils/ApiError');
 const { addMonths } = require('../../utils/datetime');
 const { releaseRoom } = require('../../utils/room-status');
 const { paginated } = require('../../utils/pagination');
+const { issueInvoice } = require('../billing/service');
 
 // Geser tanggal 'YYYY-MM-DD' n hari (boleh negatif)
 function addDays(dateStr, n) {
@@ -129,7 +130,13 @@ async function create(req, res, next) {
           [tenantId, roomId, startDate, endDate, room.price, req.user.id]
         )).rows[0];
 
-        return { ...inserted, tenant_name: tenant.name, room_number: room.room_number };
+        // Invoice pertama terbit
+        const firstInvoice = await issueInvoice(
+          { id: inserted.id, monthly_rate: inserted.monthly_rate, next_due_date: inserted.next_due_date, end_date: inserted.end_date },
+          client
+        );
+
+        return { ...inserted, tenant_name: tenant.name, room_number: room.room_number, first_invoice: firstInvoice };
       });
     } catch (err) {
       // 23505 = partial unique index (kontrak pending/active ganda)
@@ -235,7 +242,7 @@ async function terminate(req, res, next) {
         throw new ApiError(409, `Kontrak berstatus ${locked.status} tidak dapat diakhiri.`);
       }
 
-      // Batalkan semua invoice belum lunas (unpaid = tagihan menganggur, pending = pembayaran sedang berjalan)
+      // Batalkan semua invoice belum lunas 
       const cancelledInvoices = (await client.query(
         `UPDATE invoices SET status = 'cancelled', paid_at = NULL
           WHERE contract_id = $1 AND status IN ('unpaid', 'pending')
@@ -277,7 +284,7 @@ const CONTRACT_SELECT = `
   JOIN rooms r ON r.id = c.room_id
   JOIN users u ON u.id = c.tenant_id`;
 
-// Daftar kontrak milik tenant (atau milik anak asuh, bagi guardian)
+// Daftar kontrak milik tenant
 async function listMine(req, res, next) {
   try {
     const { rows } = await pool.query(
@@ -292,7 +299,7 @@ async function listMine(req, res, next) {
   }
 }
 
-// Detail satu kontrak dengan cek kepemilikan (owner/caretaker bebas, tenant/guardian hanya miliknya)
+// Detail satu kontrak 
 async function getById(req, res, next) {
   try {
     const contract = (await pool.query(
