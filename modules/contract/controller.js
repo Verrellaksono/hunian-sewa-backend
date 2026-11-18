@@ -3,7 +3,7 @@ const ApiError = require('../../utils/ApiError');
 const { addMonths } = require('../../utils/datetime');
 const { releaseRoom } = require('../../utils/room-status');
 const { paginated } = require('../../utils/pagination');
-const { issueInvoice } = require('../billing/service');
+const { issueInvoice } = require('../billing/controller');
 
 // Geser tanggal 'YYYY-MM-DD' n hari (boleh negatif)
 function addDays(dateStr, n) {

@@ -1,5 +1,5 @@
-const config = require('../../config');
-const ApiError = require('../../utils/ApiError');
+const config = require('../config');
+const ApiError = require('./ApiError');
 
 // Basis URL Snap API sesuai mode (sandbox/production)
 function snapBaseUrl() {
@@ -32,13 +32,13 @@ async function createSnapTransaction({ orderId, grossAmount, customerName, itemD
       }),
     });
   } catch (err) {
-    console.error('[gateway] Snap API tidak dapat dihubungi:', err.message);
+    console.error('[midtrans] Snap API tidak dapat dihubungi:', err.message);
     throw new ApiError(502, 'Payment gateway tidak dapat dihubungi. Coba beberapa saat lagi.');
   }
 
   const body = await resp.json().catch(() => null);
   if (!resp.ok || !body?.token) {
-    console.error(`[gateway] Snap API gagal (HTTP ${resp.status}):`, JSON.stringify(body));
+    console.error(`[midtrans] Snap API gagal (HTTP ${resp.status}):`, JSON.stringify(body));
     throw new ApiError(502, 'Payment gateway gagal membuat transaksi. Coba beberapa saat lagi.');
   }
 

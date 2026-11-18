@@ -8,8 +8,7 @@ const config = require('./config');
 const app = express();
 const PORT = config.port;
 
-// Middleware global
-// cors: izinkan request dari frontend (origin berbeda)
+// Middleware global (cors izinkan request lintas origin frontend)
 app.use(cors());
 app.use(morgan('dev')); // logger HTTP, cetak setiap request
 app.use(express.json());
@@ -39,9 +38,13 @@ app.use('/api/announcements', require('./modules/announcement/routes'));
 app.use('/api/contracts', require('./modules/contract/routes'));
 app.use('/api/files', require('./modules/file/routes')); // foto tiket (terotorisasi)
 app.use('/api/tickets', require('./modules/ticket/routes'));
-app.use('/api/invoices', require('./modules/billing/routes'));
-app.use('/api/payments', require('./modules/billing/payment-routes'));
-app.use('/api/webhooks', require('./modules/billing/webhook'));
+const billingRoutes = require('./modules/billing/routes');
+app.use('/api/invoices', billingRoutes.invoiceRouter);
+app.use('/api/payments', billingRoutes.paymentRouter);
+app.use('/api/webhooks', billingRoutes.webhookRouter);
+
+// Job berkala (scheduler sentral): 00:05 WIB invoice periodik & kontrak berakhir, dst.
+require('./modules/scheduler').startSchedulers();
 
 // --- 404 ---
 app.use((req, res) => {

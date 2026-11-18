@@ -9,8 +9,7 @@ const ApiError = require('../utils/ApiError');
 // Pastikan folder uploads ada (di luar folder publik)
 fs.mkdirSync(config.upload.dir, { recursive: true });
 
-// Nama file acak uuid TANPA ekstensi; ekstensi ditambahkan SETELAH isi file
-// tervalidasi magic bytes (lihat utils/photo.js finalizePhotoUpload)
+// Nama file acak uuid tanpa ekstensi; ekstensi ditambah setelah magic bytes tervalidasi
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, config.upload.dir),
   filename: (req, file, cb) => cb(null, crypto.randomUUID()),
@@ -26,14 +25,13 @@ const upload = multer({
   },
 });
 
-// Terima SATU foto tiket dari field 'photo', rapikan error multer jadi pesan jelas,
-// dan bersihkan file yatim bila request pada akhirnya gagal (status >= 400)
+// Terima SATU foto tiket dari field 'photo'
 function uploadTicketPhoto(req, res, next) {
   upload.single('photo')(req, res, (err) => {
     if (!err) {
       res.on('finish', () => {
         if (res.statusCode >= 400 && req.file) {
-          fs.promises.unlink(req.file.path).catch(() => {});
+          fs.promises.unlink(req.file.path).catch(() => { });
         }
       });
       return next();

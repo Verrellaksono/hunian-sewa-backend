@@ -4,8 +4,10 @@ const { pool, withTransaction } = require('../../db');
 const config = require('../../config');
 const ApiError = require('../../utils/ApiError');
 const { paginated } = require('../../utils/pagination');
-const { createSnapTransaction } = require('./gateway');
-const { settlePayment } = require('./service');
+const { createSnapTransaction } = require('../../utils/midtrans');
+
+const { addMonths, addDays, todayWIB } = require('../../utils/datetime');
+const { occupyRoom, releaseRoom } = require('../../utils/room-status');
 
 // Kolom invoice, ditambah kamar & penyewa (dipakai ulang list & detail)
 const INVOICE_SELECT = `
@@ -45,8 +47,7 @@ function parseId(value, label) {
   return n;
 }
 
-// Ambil invoice dengan cek akses baca:
-// owner semua; tenant miliknya; guardian penyewa tertaut; caretaker ditolak di route
+// Ambil invoice dengan cek akses: owner semua, tenant miliknya, guardian anak asuh, caretaker ditolak
 async function getInvoiceForUser(req, id) {
   const invoice = (await pool.query(`${INVOICE_SELECT} WHERE i.id = $1`, [id])).rows[0];
   // Validasi Invoice Ditemukan
@@ -360,4 +361,192 @@ async function rekap(req, res, next) {
   }
 }
 
-module.exports = { list, getById, pay, handlePayment, mapTransactionStatus, rekap };
+// Terbitkan SATU invoice bulanan untuk kontrak
+async function issueInvoice(contract, client) {
+  if (!client) throw new Error('issueInvoice wajib dipanggil dalam transaksi (param client).');
+  const periodStart = contract.next_due_date;
+  if (!periodStart || !contract.monthly_rate) {
+    throw new ApiError(500, 'Data kontrak tidak lengkap untuk penerbitan invoice.');
+  }
+
+  // Jangan melewati end_date (kontrak rolling tanpa end_date = boleh terus)
+  if (contract.end_date && periodStart > contract.end_date) return null;
+
+  // Validasi Tidak ada invoice belum lunas
+  const open = await client.query(
+    `SELECT id FROM invoices WHERE contract_id = $1 AND status IN ('unpaid', 'pending') LIMIT 1`,
+    [contract.id]
+  );
+  if (open.rows.length > 0) return null;
+
+  // Nomor urut invoice kontrak ini 
+  const { rows: seqRows } = await client.query(
+    `SELECT count(*)::int AS n FROM invoices WHERE contract_id = $1`,
+    [contract.id]
+  );
+  const seq = seqRows[0].n + 1;
+  const periodEnd = addDays(addMonths(periodStart, 1), -1);
+  const ym = periodStart.slice(0, 7).replace('-', '');
+  const invoiceNumber = `INV-${ym}-${contract.id}-${seq}`;
+
+  try {
+    const inv = (await client.query(
+      `INSERT INTO invoices (invoice_number, contract_id, period_start, period_end, due_date, amount)
+       VALUES ($1, $2, $3, $4, $3, $5)
+       RETURNING id, invoice_number, contract_id, period_start, period_end, due_date,
+                 amount, status, issued_at`,
+      [invoiceNumber, contract.id, periodStart, periodEnd, Number(contract.monthly_rate)]
+    )).rows[0];
+
+    // Item invoice: sewa bulanan
+    await client.query(
+      `INSERT INTO invoice_items (invoice_id, item_type, description, quantity, unit_price, subtotal)
+       VALUES ($1, 'rent', $2, 1, $3, $3)`,
+      [inv.id, `Sewa kamar periode ${periodStart} s/d ${periodEnd}`, inv.amount]
+    );
+
+    return inv;
+  } catch (err) {
+    // (contract_id, period_start) atau invoice_number sudah ada, anggap sudah terbit
+    if (err.code === '23505') return null;
+    throw err;
+  }
+}
+
+// Settlement atomik dalam SATU transaksi (wajib param client): payment settlement, invoice lunas, next_due_date maju 1 bulan, kontrak pending ke active, kamar occupied
+async function settlePayment({ paymentId, paymentType, transactionId, payload }, client) {
+  if (!client) throw new Error('settlePayment wajib dipanggil dalam transaksi (param client).');
+
+  // Kunci payment: notifikasi serentak tidak boleh memproses ulang
+  const pay = (await client.query(
+    `SELECT id, invoice_id, status FROM payments WHERE id = $1 FOR UPDATE`,
+    [paymentId]
+  )).rows[0];
+  if (!pay) return { applied: false };
+  if (pay.status === 'settlement') return { applied: false };
+
+  await client.query(
+    `UPDATE payments
+     SET status = 'settlement',
+         paid_at = COALESCE(paid_at, now()),
+         payment_method = COALESCE($2, payment_method),
+         gateway_transaction_id = COALESCE($3, gateway_transaction_id),
+         gateway_payload = $4,
+         updated_at = now()
+     WHERE id = $1`,
+    [paymentId, paymentType, transactionId, payload]
+  );
+
+  // Invoice lunas hanya bila masih unpaid atau pending; invoice sudah paid tidak mengulang siklus kontrak
+  const inv = (await client.query(
+    `UPDATE invoices
+     SET status = 'paid', paid_at = COALESCE(paid_at, now())
+     WHERE id = $1 AND status IN ('unpaid', 'pending')
+     RETURNING contract_id`,
+    [pay.invoice_id]
+  )).rows[0];
+
+  if (inv) {
+    const c = (await client.query(
+      `SELECT id, room_id, status, next_due_date FROM tenancy_contracts WHERE id = $1 FOR UPDATE`,
+      [inv.contract_id]
+    )).rows[0];
+    // Kontrak completed/terminated tidak dilanjutkan siklus sewanya
+    if (c && (c.status === 'pending' || c.status === 'active') && c.next_due_date) {
+      const newDue = addMonths(c.next_due_date, 1);
+      if (c.status === 'pending') {
+        await client.query(
+          `UPDATE tenancy_contracts SET status = 'active', next_due_date = $2, updated_at = now() WHERE id = $1`,
+          [c.id, newDue]
+        );
+        await occupyRoom(client, c.room_id);
+      } else {
+        await client.query(
+          `UPDATE tenancy_contracts SET next_due_date = $2, updated_at = now() WHERE id = $1`,
+          [c.id, newDue]
+        );
+      }
+    }
+  }
+
+  return { applied: true };
+}
+
+// Job harian: tutup kontrak berakhir dan terbitkan invoice periodik; gagal satu kontrak hanya dicatat log
+async function runDailyBilling() {
+  const today = todayWIB();
+  const batasTerbit = addDays(today, 7);
+  let issued = 0;
+  let completedCount = 0;
+
+  // Kontrak active dengan end_date sudah lewat dan tanpa invoice terbuka: completed, kamar dibebaskan
+  const finished = (await pool.query(
+    `SELECT c.id, c.room_id
+     FROM tenancy_contracts c
+     WHERE c.status = 'active' AND c.end_date IS NOT NULL AND c.end_date < $1
+       AND NOT EXISTS (
+         SELECT 1 FROM invoices i WHERE i.contract_id = c.id AND i.status IN ('unpaid', 'pending')
+       )
+     ORDER BY c.id`,
+    [today]
+  )).rows;
+  for (const row of finished) {
+    try {
+      await withTransaction(async (client) => {
+        // Kunci kontrak: status bisa berubah sejak pengecekan awal
+        const c = (await client.query(
+          `SELECT id, room_id, status FROM tenancy_contracts WHERE id = $1 FOR UPDATE`,
+          [row.id]
+        )).rows[0];
+        if (!c || c.status !== 'active') return;
+        const open = await client.query(
+          `SELECT 1 FROM invoices WHERE contract_id = $1 AND status IN ('unpaid', 'pending') LIMIT 1`,
+          [c.id]
+        );
+        if (open.rows.length > 0) return;
+        await client.query(
+          `UPDATE tenancy_contracts SET status = 'completed', updated_at = now() WHERE id = $1`,
+          [c.id]
+        );
+        await releaseRoom(client, c.room_id);
+        completedCount += 1;
+      });
+    } catch (err) {
+      console.error(`[job-harian] gagal menutup kontrak #${row.id}:`, err.message);
+    }
+  }
+
+  // Kontrak active tanpa invoice terbuka: terbitkan invoice bila next_due_date sampai tujuh hari, tidak melewati end_date
+  const due = (await pool.query(
+    `SELECT id, monthly_rate, next_due_date, end_date
+     FROM tenancy_contracts
+     WHERE status = 'active' AND next_due_date IS NOT NULL AND next_due_date <= $1
+       AND (end_date IS NULL OR next_due_date <= end_date)
+       AND NOT EXISTS (
+         SELECT 1 FROM invoices i WHERE i.contract_id = tenancy_contracts.id AND i.status IN ('unpaid', 'pending')
+       )
+     ORDER BY id`,
+    [batasTerbit]
+  )).rows;
+  for (const row of due) {
+    try {
+      await withTransaction(async (client) => {
+        // Kunci kontrak: status bisa berubah sejak pengecekan awal
+        const c = (await client.query(
+          `SELECT id, monthly_rate, next_due_date, end_date, status FROM tenancy_contracts WHERE id = $1 FOR UPDATE`,
+          [row.id]
+        )).rows[0];
+        if (!c || c.status !== 'active' || !c.next_due_date) return;
+        if (c.end_date && c.next_due_date > c.end_date) return;
+        const inv = await issueInvoice(c, client);
+        if (inv) issued += 1;
+      });
+    } catch (err) {
+      console.error(`[job-harian] gagal menerbitkan invoice kontrak #${row.id}:`, err.message);
+    }
+  }
+
+  return { issued, completed: completedCount };
+}
+
+module.exports = { list, getById, pay, handlePayment, mapTransactionStatus, rekap, issueInvoice, runDailyBilling };

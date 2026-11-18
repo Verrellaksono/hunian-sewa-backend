@@ -35,8 +35,7 @@ async function detectImageTypeFromFile(filePath) {
   }
 }
 
-// Finalisasi foto upload multer:
-// Kembalikan nama file final untuk disimpan ke kolom issue_tickets.photo_path
+// Finalisasi foto upload multer; kembalikan nama file final utk kolom issue_tickets.photo_path
 async function finalizePhotoUpload(file) {
   if (!file) return null; // foto opsional
 
