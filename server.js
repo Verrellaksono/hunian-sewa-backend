@@ -7,6 +7,7 @@ const cors = require('cors');
 const config = require('./config');
 const app = express();
 const PORT = config.port;
+const billingRoutes = require('./modules/billing/routes');
 
 // Middleware global (cors izinkan request lintas origin frontend)
 app.use(cors());
@@ -30,7 +31,7 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
 });
 
-// --- Rute modul (dimount saat tiap modul selesai dibangun) ---
+// Rute modul
 app.use('/api/auth', require('./modules/auth/routes'));
 app.use('/api', require('./modules/user/routes')); // /api/me, /api/me/password
 app.use('/api/rooms', require('./modules/room/routes'));
@@ -38,7 +39,6 @@ app.use('/api/announcements', require('./modules/announcement/routes'));
 app.use('/api/contracts', require('./modules/contract/routes'));
 app.use('/api/files', require('./modules/file/routes')); // foto tiket (terotorisasi)
 app.use('/api/tickets', require('./modules/ticket/routes'));
-const billingRoutes = require('./modules/billing/routes');
 app.use('/api/invoices', billingRoutes.invoiceRouter);
 app.use('/api/payments', billingRoutes.paymentRouter);
 app.use('/api/webhooks', billingRoutes.webhookRouter);

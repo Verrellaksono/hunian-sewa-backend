@@ -549,4 +549,44 @@ async function runDailyBilling() {
   return { issued, completed: completedCount };
 }
 
-module.exports = { list, getById, pay, handlePayment, mapTransactionStatus, rekap, issueInvoice, runDailyBilling };
+// Job 15 menit: payment pending yang kedaluwarsa jadi expire, invoice kembali unpaid
+async function expirePayments() {
+  let expired = 0;
+
+  const stale = (await pool.query(
+    `SELECT id FROM payments WHERE status = 'pending' AND expires_at <= now() ORDER BY id`
+  )).rows;
+  for (const row of stale) {
+    try {
+      await withTransaction(async (client) => {
+        // Kunci payment: status bisa berubah sejak pengecekan awal
+        const p = (await client.query(
+          `SELECT id, invoice_id, status FROM payments WHERE id = $1 FOR UPDATE`,
+          [row.id]
+        )).rows[0];
+        if (!p || p.status !== 'pending') return;
+        await client.query(
+          `UPDATE payments SET status = 'expire', updated_at = now() WHERE id = $1`,
+          [p.id]
+        );
+        // Invoice kembali unpaid hanya bila statusnya masih pending dan tidak ada payment hidup lain
+        await client.query(
+          `UPDATE invoices SET status = 'unpaid'
+           WHERE id = $1 AND status = 'pending'
+             AND NOT EXISTS (
+               SELECT 1 FROM payments
+               WHERE invoice_id = $1 AND status = 'pending' AND expires_at > now()
+             )`,
+          [p.invoice_id]
+        );
+        expired += 1;
+      });
+    } catch (err) {
+      console.error(`[job-kedaluwarsa] gagal mengexpirkan payment #${row.id}:`, err.message);
+    }
+  }
+
+  return { expired };
+}
+
+module.exports = { list, getById, pay, handlePayment, mapTransactionStatus, rekap, issueInvoice, runDailyBilling, expirePayments };
