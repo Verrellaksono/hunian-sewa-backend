@@ -1,6 +1,6 @@
 const { pool, withTransaction } = require('../../db');
 const ApiError = require('../../utils/ApiError');
-const { addMonths } = require('../../utils/datetime');
+const { addMonths, formatRupiah } = require('../../utils/datetime');
 const { releaseRoom } = require('../../utils/room-status');
 const { paginated } = require('../../utils/pagination');
 const { issueInvoice } = require('../billing/controller');
@@ -287,13 +287,23 @@ const CONTRACT_SELECT = `
 // Daftar kontrak milik tenant
 async function listMine(req, res, next) {
   try {
+    const total = Number(
+      (await pool.query(
+        `SELECT count(*) AS n
+         FROM tenancy_contracts c
+         JOIN users u ON u.id = c.tenant_id
+         WHERE c.tenant_id = $1 OR u.guardian_id = $1`,
+        [req.user.id]
+      )).rows[0].n
+    );
     const { rows } = await pool.query(
       `${CONTRACT_SELECT}
        WHERE c.tenant_id = $1 OR u.guardian_id = $1
-       ORDER BY c.id DESC`,
-      [req.user.id]
+       ORDER BY c.id DESC
+       LIMIT $2 OFFSET $3`,
+      [req.user.id, req.pagination.limit, req.pagination.offset]
     );
-    res.status(200).json({ success: true, ...paginated(rows, rows.length, req.pagination) });
+    res.status(200).json({ success: true, ...paginated(rows.map((row) => ({ ...row, monthly_rate_rupiah: formatRupiah(row.monthly_rate) })), total, req.pagination) });
   } catch (err) {
     next(err);
   }
@@ -317,7 +327,7 @@ async function getById(req, res, next) {
       }
     }
 
-    res.status(200).json({ success: true, data: contract });
+    res.status(200).json({ success: true, data: { ...contract, monthly_rate_rupiah: formatRupiah(contract.monthly_rate) } });
   } catch (err) {
     next(err);
   }

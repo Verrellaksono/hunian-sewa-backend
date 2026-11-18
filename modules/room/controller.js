@@ -1,6 +1,12 @@
 const { pool } = require('../../db');
 const ApiError = require('../../utils/ApiError');
 const { paginated } = require('../../utils/pagination');
+const { formatRupiah } = require('../../utils/datetime');
+
+// Tambah field terformat rupiah untuk tampilan
+function formatRoomRow(row) {
+  return { ...row, price_rupiah: row.price === null ? null : formatRupiah(row.price) };
+}
 
 const VALID_STATUS = ['available', 'occupied', 'maintenance'];
 
@@ -37,7 +43,7 @@ async function list(req, res, next) {
       params
     );
 
-    res.status(200).json({ success: true, ...paginated(rows, total, req.pagination) });
+    res.status(200).json({ success: true, ...paginated(rows.map(formatRoomRow), total, req.pagination) });
   } catch (err) {
     next(err);
   }
@@ -76,7 +82,7 @@ async function create(req, res, next) {
       [nomor, String(room_type).trim(), facilities ?? null, price === '' ? null : price]
     );
 
-    res.status(201).json({ success: true, message: 'Kamar berhasil ditambahkan.', data: rows[0] });
+    res.status(201).json({ success: true, message: 'Kamar berhasil ditambahkan.', data: formatRoomRow(rows[0]) });
   } catch (err) {
     next(err);
   }
@@ -158,7 +164,7 @@ async function update(req, res, next) {
       [...Object.values(fields), room.id]
     );
 
-    res.status(200).json({ success: true, message: 'Kamar berhasil diperbarui.', data: updated.rows[0] });
+    res.status(200).json({ success: true, message: 'Kamar berhasil diperbarui.', data: formatRoomRow(updated.rows[0]) });
   } catch (err) {
     next(err);
   }

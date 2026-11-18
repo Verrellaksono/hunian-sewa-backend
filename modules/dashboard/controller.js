@@ -1,5 +1,5 @@
 const { pool } = require('../../db');
-const { todayWIB } = require('../../utils/datetime');
+const { todayWIB, formatRupiah } = require('../../utils/datetime');
 const ApiError = require('../../utils/ApiError');
 
 // Selisih hari antara tanggal due dan hari ini (WIB)
@@ -67,7 +67,7 @@ async function tenantSummary(userId, today) {
       room_number: contract.room_number,
       next_due_date: contract.next_due_date,
       invoice: contract.invoice_id ? {
-        id: contract.invoice_id, amount: contract.amount,
+        id: contract.invoice_id, amount: contract.amount, amount_rupiah: formatRupiah(contract.amount),
         due_date: contract.due_date, status: contract.invoice_status,
       } : null,
     } : null,
@@ -108,7 +108,7 @@ async function guardianSummary(userId, today) {
       ? buildBadge(row.due_date || row.next_due_date, row.invoice_status, today)
       : null,
     open_invoice: row.invoice_id ? {
-      id: row.invoice_id, amount: row.amount,
+      id: row.invoice_id, amount: row.amount, amount_rupiah: formatRupiah(row.amount),
       due_date: row.due_date, status: row.invoice_status,
     } : null,
   }));
@@ -149,8 +149,8 @@ async function ownerSummary() {
   return {
     occupancy: occ,
     contracts,
-    open_invoices: { count: Number(open.n), amount: Number(open.amount) },
-    paid_this_month: { count: Number(paidThisMonth.n), amount: Number(paidThisMonth.amount) },
+    open_invoices: { count: Number(open.n), amount: Number(open.amount), amount_rupiah: formatRupiah(open.amount) },
+    paid_this_month: { count: Number(paidThisMonth.n), amount: Number(paidThisMonth.amount), amount_rupiah: formatRupiah(paidThisMonth.amount) },
   };
 }
 

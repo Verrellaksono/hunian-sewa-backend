@@ -185,11 +185,24 @@ async function list(req, res, next) {
       params.push(status);
       where += `${where ? ' AND ' : ' WHERE '}t.status = $${params.length}`;
     }
+    const clause = where;
+    const total = Number(
+      (await pool.query(
+        `SELECT count(*) AS n
+         FROM issue_tickets t
+         JOIN tenancy_contracts c ON c.id = t.contract_id
+         ${clause}`,
+        params
+      )).rows[0].n
+    );
+
+    // Ambil satu halaman data
+    params.push(req.pagination.limit, req.pagination.offset);
     const { rows } = await pool.query(
-      `${TICKET_SELECT} ${where} ORDER BY t.created_at DESC, t.id DESC`,
+      `${TICKET_SELECT} ${where} ORDER BY t.created_at DESC, t.id DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
-    res.status(200).json({ success: true, ...paginated(rows, rows.length, req.pagination) });
+    res.status(200).json({ success: true, ...paginated(rows, total, req.pagination) });
   } catch (err) {
     next(err);
   }
@@ -210,16 +223,21 @@ async function listComments(req, res, next) {
   try {
     const id = parseId(req.params.id, 'ID tiket');
     await getTicketForUser(req, id);
+    const total = Number(
+      (await pool.query(`SELECT count(*) AS n FROM ticket_comments WHERE ticket_id = $1`, [id])).rows[0].n
+    );
+    const params = [id, req.pagination.limit, req.pagination.offset];
     const { rows } = await pool.query(
       `SELECT k.id, k.ticket_id, k.user_id, k.message, k.created_at,
               u.name AS user_name, u.role AS user_role
        FROM ticket_comments k
        JOIN users u ON u.id = k.user_id
        WHERE k.ticket_id = $1
-       ORDER BY k.id`,
-      [id]
+       ORDER BY k.id
+       LIMIT $2 OFFSET $3`,
+      params
     );
-    res.status(200).json({ success: true, ...paginated(rows, rows.length, req.pagination) });
+    res.status(200).json({ success: true, ...paginated(rows, total, req.pagination) });
   } catch (err) {
     next(err);
   }

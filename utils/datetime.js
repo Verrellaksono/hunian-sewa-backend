@@ -36,6 +36,18 @@ function formatRupiah(value) {
   return 'Rp' + Number(value).toLocaleString('id-ID');
 }
 
+// Format waktu ke string WIB (mis. 18 Nov 2026, 14.30 WIB)
+function formatWIB(value) {
+  if (!value) return null;
+  const text = new Intl.DateTimeFormat('id-ID', {
+    timeZone: WIB,
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+    hour12: false,
+  }).format(new Date(value));
+  return `${text} WIB`;
+}
+
 // Jam sekarang zona WIB
 function nowWIB() {
   return new Intl.DateTimeFormat('id-ID', {
@@ -44,4 +56,4 @@ function nowWIB() {
   }).format(new Date());
 }
 
-module.exports = { WIB, todayWIB, addMonths, addDays, daysBetween, formatRupiah, nowWIB };
+module.exports = { WIB, todayWIB, addMonths, addDays, daysBetween, formatRupiah, formatWIB, nowWIB };

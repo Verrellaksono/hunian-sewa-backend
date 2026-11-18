@@ -6,7 +6,7 @@ const ApiError = require('../../utils/ApiError');
 const { paginated } = require('../../utils/pagination');
 const { createSnapTransaction } = require('../../utils/midtrans');
 
-const { addMonths, addDays, todayWIB } = require('../../utils/datetime');
+const { addMonths, addDays, todayWIB, formatRupiah, formatWIB } = require('../../utils/datetime');
 const { occupyRoom, releaseRoom } = require('../../utils/room-status');
 
 // Kolom invoice, ditambah kamar & penyewa (dipakai ulang list & detail)
@@ -47,6 +47,26 @@ function parseId(value, label) {
   return n;
 }
 
+// Tambah field terformat rupiah dan waktu WIB untuk tampilan
+function formatInvoiceRow(row) {
+  return {
+    ...row,
+    amount_rupiah: formatRupiah(row.amount),
+    issued_at_wib: formatWIB(row.issued_at),
+    paid_at_wib: formatWIB(row.paid_at),
+  };
+}
+
+function formatPaymentRow(row) {
+  return {
+    ...row,
+    gross_amount_rupiah: formatRupiah(row.gross_amount),
+    expires_at_wib: formatWIB(row.expires_at),
+    paid_at_wib: formatWIB(row.paid_at),
+    created_at_wib: formatWIB(row.created_at),
+  };
+}
+
 // Ambil invoice dengan cek akses: owner semua, tenant miliknya, guardian anak asuh, caretaker ditolak
 async function getInvoiceForUser(req, id) {
   const invoice = (await pool.query(`${INVOICE_SELECT} WHERE i.id = $1`, [id])).rows[0];
@@ -69,8 +89,19 @@ async function list(req, res, next) {
       params.push(req.user.id);
       where = `WHERE c.tenant_id = $1 OR u.guardian_id = $1`;
     }
-    const { rows } = await pool.query(`${INVOICE_SELECT} ${where} ORDER BY i.due_date DESC, i.id DESC`, params);
-    res.status(200).json({ success: true, ...paginated(rows, rows.length, req.pagination) });
+
+    // Hitung total sesuai filter
+    const total = Number(
+      (await pool.query(`SELECT count(*) AS n FROM invoices i JOIN tenancy_contracts c ON c.id = i.contract_id JOIN users u ON u.id = c.tenant_id ${where}`, params)).rows[0].n
+    );
+
+    // Ambil satu halaman data
+    params.push(req.pagination.limit, req.pagination.offset);
+    const { rows } = await pool.query(
+      `${INVOICE_SELECT} ${where} ORDER BY i.due_date DESC, i.id DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+    res.status(200).json({ success: true, ...paginated(rows.map(formatInvoiceRow), total, req.pagination) });
   } catch (err) {
     next(err);
   }
@@ -84,13 +115,17 @@ async function getById(req, res, next) {
       `SELECT id, item_type, description, quantity, unit_price, subtotal
        FROM invoice_items WHERE invoice_id = $1 ORDER BY id`,
       [invoice.id]
-    )).rows;
+    )).rows.map((item) => ({
+      ...item,
+      unit_price_rupiah: formatRupiah(item.unit_price),
+      subtotal_rupiah: formatRupiah(item.subtotal),
+    }));
     const payments = (await pool.query(
       `SELECT id, order_id, status, payment_method, gross_amount, expires_at, paid_at, created_at
        FROM payments WHERE invoice_id = $1 ORDER BY id DESC`,
       [invoice.id]
-    )).rows;
-    res.status(200).json({ success: true, data: { ...invoice, items, payments } });
+    )).rows.map(formatPaymentRow);
+    res.status(200).json({ success: true, data: { ...formatInvoiceRow(invoice), items, payments } });
   } catch (err) {
     next(err);
   }
@@ -121,7 +156,7 @@ async function pay(req, res, next) {
       return res.status(200).json({
         success: true,
         message: 'Pembayaran masih menunggu dilunasi.',
-        data: { order_id: existing.order_id, payment_url: existing.payment_url, status: 'pending', expires_at: existing.expires_at, reused: true },
+        data: { order_id: existing.order_id, payment_url: existing.payment_url, status: 'pending', expires_at: existing.expires_at, expires_at_wib: formatWIB(existing.expires_at), reused: true },
       });
     }
 
@@ -175,7 +210,7 @@ async function pay(req, res, next) {
       [payment.id, snap.paymentUrl, snap.token]
     )).rows[0];
 
-    res.status(201).json({ success: true, message: 'Transaksi pembayaran dibuat. Selesaikan pembayaran sebelum kedaluwarsa.', data: updated });
+    res.status(201).json({ success: true, message: 'Transaksi pembayaran dibuat. Selesaikan pembayaran sebelum kedaluwarsa.', data: formatPaymentRow(updated) });
   } catch (err) {
     // Melanggar partial unique (payment pending ganda oleh request serentak)
     if (err.code === '23505') {
@@ -355,7 +390,7 @@ async function rekap(req, res, next) {
       `${PAYMENT_SELECT} ${clause} ORDER BY p.created_at DESC, p.id DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
-    res.status(200).json({ success: true, ...paginated(rows, total, req.pagination) });
+    res.status(200).json({ success: true, ...paginated(rows.map(formatPaymentRow), total, req.pagination) });
   } catch (err) {
     next(err);
   }
