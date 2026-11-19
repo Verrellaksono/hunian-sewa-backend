@@ -40,6 +40,7 @@ app.use('/api/contracts', require('./modules/contract/routes'));
 app.use('/api/files', require('./modules/file/routes')); // foto tiket (terotorisasi)
 app.use('/api/tickets', require('./modules/ticket/routes'));
 app.use('/api/dashboard', require('./modules/dashboard/routes'));
+app.use('/api/reports', require('./modules/report/routes'));
 app.use('/api/invoices', billingRoutes.invoiceRouter);
 app.use('/api/payments', billingRoutes.paymentRouter);
 app.use('/api/webhooks', billingRoutes.webhookRouter);
