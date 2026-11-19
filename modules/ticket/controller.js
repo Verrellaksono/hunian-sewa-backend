@@ -47,7 +47,8 @@ async function create(req, res, next) {
       );
       // Nomor kamar via join tabel kontrak-kamar
       const ticket = (await pool.query(
-        `SELECT t.id, t.contract_id, t.category, t.description, t.photo_path, t.status,
+        `SELECT t.id, ('T-' || lpad(t.id::text, 4, '0')) AS ticket_number,
+                t.contract_id, t.category, t.description, t.photo_path, t.status,
                 t.technical_note, t.created_at, t.updated_at, r.room_number, u.name AS tenant_name
          FROM issue_tickets t
          JOIN tenancy_contracts c ON c.id = t.contract_id
@@ -116,7 +117,8 @@ async function updateStatus(req, res, next) {
 
     // Detail tiket terbaru, lengkap nomor kamar & penyewa via join
     const ticket = (await pool.query(
-      `SELECT t.id, t.contract_id, t.category, t.description, t.photo_path, t.status,
+      `SELECT t.id, ('T-' || lpad(t.id::text, 4, '0')) AS ticket_number,
+              t.contract_id, t.category, t.description, t.photo_path, t.status,
               t.technical_note, t.resolved_at, t.created_at, t.updated_at, r.room_number, u.name AS tenant_name
        FROM issue_tickets t
        JOIN tenancy_contracts c ON c.id = t.contract_id
@@ -133,7 +135,8 @@ async function updateStatus(req, res, next) {
 
 // Kolom tiket, kamar, penyewa & wali
 const TICKET_SELECT = `
-  SELECT t.id, t.contract_id, t.category, t.description, t.photo_path, t.status,
+  SELECT t.id, ('T-' || lpad(t.id::text, 4, '0')) AS ticket_number,
+         t.contract_id, t.category, t.description, t.photo_path, t.status,
          t.technical_note, t.resolved_at, t.created_at, t.updated_at,
          r.room_number, u.name AS tenant_name, c.tenant_id
   FROM issue_tickets t
