@@ -115,7 +115,15 @@ async function guardianSummary(userId, today) {
   return { wards };
 }
 
-// Ringkasan caretaker: okupansi dan antrian tiket terbaru
+// Jumlah tiket yang belum selesai
+async function activeTicketCount() {
+  const row = (await pool.query(
+    `SELECT count(*)::int AS n FROM issue_tickets WHERE status IN ('pending', 'in_progress')`
+  )).rows[0];
+  return Number(row.n);
+}
+
+// Ringkasan caretaker: okupansi, antrian tiket terbaru, kontrak menunggu pembayaran
 async function caretakerSummary() {
   const tickets = (await pool.query(
     `SELECT t.id, t.category, t.status, t.created_at, r.room_number, u.name AS tenant_name
@@ -126,7 +134,15 @@ async function caretakerSummary() {
      WHERE t.status IN ('pending', 'in_progress')
      ORDER BY t.created_at ASC, t.id ASC LIMIT 10`
   )).rows;
-  return { occupancy: await occupancy(), ticket_queue: tickets };
+  const pendingContracts = (await pool.query(
+    `SELECT count(*)::int AS n FROM tenancy_contracts WHERE status = 'pending'`
+  )).rows[0];
+  return {
+    occupancy: await occupancy(),
+    active_tickets: { count: await activeTicketCount(), items: tickets },
+    pending_contracts: Number(pendingContracts.n),
+    ticket_queue: tickets,
+  };
 }
 
 // Ringkasan owner: okupansi, rekap invoice dan pembayaran
@@ -146,11 +162,29 @@ async function ownerSummary() {
             count(*) FILTER (WHERE status = 'pending')::int AS pending
      FROM tenancy_contracts`
   )).rows[0];
+  const currentPeriod = (await pool.query(
+    `SELECT count(*)::int AS total,
+            count(*) FILTER (WHERE status = 'paid')::int AS paid,
+            count(*) FILTER (WHERE status = 'unpaid')::int AS unpaid,
+            count(*) FILTER (WHERE status = 'pending')::int AS pending
+     FROM invoices
+     WHERE date_trunc('month', period_start) = date_trunc('month', now())`
+  )).rows[0];
+  const totalCount = Number(currentPeriod.total);
+  const paidCount = Number(currentPeriod.paid);
   return {
     occupancy: occ,
     contracts,
+    active_tickets: { count: await activeTicketCount() },
     open_invoices: { count: Number(open.n), amount: Number(open.amount), amount_rupiah: formatRupiah(open.amount) },
     paid_this_month: { count: Number(paidThisMonth.n), amount: Number(paidThisMonth.amount), amount_rupiah: formatRupiah(paidThisMonth.amount) },
+    invoices_current_period: {
+      total: totalCount,
+      paid: paidCount,
+      unpaid: Number(currentPeriod.unpaid),
+      pending: Number(currentPeriod.pending),
+      paid_percentage: totalCount > 0 ? Math.round((paidCount / totalCount) * 100) : 0,
+    },
   };
 }
 
