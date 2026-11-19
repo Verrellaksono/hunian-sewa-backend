@@ -263,6 +263,16 @@ async function deactivateUser(req, res, next) {
     if (target.id === req.user.id) {
       throw new ApiError(403, 'Tidak dapat menonaktifkan akun Anda sendiri.');
     }
+    // Validasi Penyewa Dengan Kontrak Berjalan
+    if (target.role === 'tenant') {
+      const running = await pool.query(
+        `SELECT 1 FROM tenancy_contracts WHERE tenant_id = $1 AND status IN ('pending', 'active') LIMIT 1`,
+        [target.id]
+      );
+      if (running.rowCount > 0) {
+        throw new ApiError(409, 'Penyewa masih memiliki kontrak berjalan. Selesaikan atau batalkan kontraknya sebelum menonaktifkan akun.');
+      }
+    }
 
     // Query nonaktifkan akun (akses terputus otomatis via middleware auth)
     const updated = await pool.query(
