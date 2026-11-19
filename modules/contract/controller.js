@@ -5,7 +5,19 @@ const { releaseRoom } = require('../../utils/room-status');
 const { paginated } = require('../../utils/pagination');
 const { issueInvoice } = require('../billing/controller');
 
-// Geser tanggal 'YYYY-MM-DD' n hari (boleh negatif)
+// Kolom kontrak, ditambah kamar & penyewa (dipakai ulang beberapa endpoint)
+const CONTRACT_SELECT = `
+  SELECT c.id, c.tenant_id, c.room_id, c.start_date, c.end_date, c.monthly_rate,
+         c.next_due_date, c.status, c.terminated_at, c.created_at, c.updated_at,
+         r.room_number, u.name AS tenant_name
+  FROM tenancy_contracts c
+  JOIN rooms r ON r.id = c.room_id
+  JOIN users u ON u.id = c.tenant_id`;
+
+// Status kontrak yang sah untuk filter daftar
+const CONTRACT_STATUSES = ['pending', 'active', 'completed', 'terminated', 'cancelled'];
+
+// Geser tanggal 'YYYY-MM-DD' n hari 
 function addDays(dateStr, n) {
   const [y, m, d] = dateStr.split('-').map(Number);
   const dt = new Date(Date.UTC(y, m - 1, d) + n * 86400000);
@@ -156,7 +168,7 @@ async function create(req, res, next) {
   }
 }
 
-// Perpanjang kontrak: set/kosongkan end_date (FR-12)
+// Perpanjang kontrak: set/kosongkan end_date
 async function extend(req, res, next) {
   try {
     const body = req.body || {};
@@ -221,7 +233,7 @@ async function extend(req, res, next) {
   }
 }
 
-// Akhiri kontrak (FR-12): terminated, kamar kembali available, invoice belum lunas dibatalkan
+// Akhiri kontrak: terminated, kamar kembali available, invoice belum lunas dibatalkan
 async function terminate(req, res, next) {
   try {
     const result = await withTransaction(async (client) => {
@@ -275,14 +287,45 @@ async function terminate(req, res, next) {
   }
 }
 
-// Kolom kontrak, ditambah kamar & penyewa (dipakai ulang beberapa endpoint)
-const CONTRACT_SELECT = `
-  SELECT c.id, c.tenant_id, c.room_id, c.start_date, c.end_date, c.monthly_rate,
-         c.next_due_date, c.status, c.terminated_at, c.created_at, c.updated_at,
-         r.room_number, u.name AS tenant_name
-  FROM tenancy_contracts c
-  JOIN rooms r ON r.id = c.room_id
-  JOIN users u ON u.id = c.tenant_id`;
+// Daftar kontrak untuk staf (owner & caretaker)
+async function listAll(req, res, next) {
+  try {
+    const status = req.query.status;
+    // Validasi Filter Status
+    if (status && !CONTRACT_STATUSES.includes(status)) {
+      throw new ApiError(400, `Filter status harus salah satu dari: ${CONTRACT_STATUSES.join(', ')}.`);
+    }
+
+    const where = [];
+    const params = [];
+    if (status) {
+      params.push(status);
+      where.push(`c.status = $${params.length}`);
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    // Query hitung total
+    const total = Number(
+      (await pool.query(`SELECT count(*) AS n FROM tenancy_contracts c ${whereSql}`, params)).rows[0].n
+    );
+
+    // Query data halaman
+    params.push(req.pagination.limit, req.pagination.offset);
+    const { rows } = await pool.query(
+      `${CONTRACT_SELECT} ${whereSql}
+       ORDER BY c.id DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    res.status(200).json({
+      success: true,
+      ...paginated(rows.map((row) => ({ ...row, monthly_rate_rupiah: formatRupiah(row.monthly_rate) })), total, req.pagination),
+    });
+  } catch (err) {
+    next(err);
+  }
+}
 
 // Daftar kontrak milik tenant
 async function listMine(req, res, next) {
@@ -333,4 +376,4 @@ async function getById(req, res, next) {
   }
 }
 
-module.exports = { create, extend, terminate, listMine, getById };
+module.exports = { create, extend, terminate, listAll, listMine, getById };

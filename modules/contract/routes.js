@@ -11,6 +11,8 @@ const router = express.Router();
 router.post('/', auth, requireRole('owner', 'caretaker'), controller.create);
 // Perpanjang kontrak (caretaker & owner)
 router.patch('/:id', auth, requireRole('owner', 'caretaker'), controller.extend);
+// Daftar kontrak untuk staf (owner & caretaker)
+router.get('/', auth, requireRole('owner', 'caretaker'), pagination, controller.listAll);
 // Daftar kontrak milik tenant/guardian
 router.get('/me', auth, requireRole('tenant', 'guardian'), pagination, controller.listMine);
 // Detail kontrak (owner/caretaker bebas; tenant/guardian hanya miliknya)
