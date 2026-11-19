@@ -24,21 +24,30 @@ async function list(req, res, next) {
     const params = [];
     if (status) {
       params.push(status);
-      where.push(`status = $${params.length}`);
+      where.push(`r.status = $${params.length}`);
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     // Query hitung total
     const total = Number(
-      (await pool.query(`SELECT count(*) AS n FROM rooms ${whereSql}`, params)).rows[0].n
+      (await pool.query(`SELECT count(*) AS n FROM rooms r ${whereSql}`, params)).rows[0].n
     );
 
-    // Query data halaman
+    // Query data halaman dengan nama penghuni kontrak berjalan
     params.push(req.pagination.limit, req.pagination.offset);
     const { rows } = await pool.query(
-      `SELECT id, room_number, room_type, facilities, price, status, created_at, updated_at
-       FROM rooms ${whereSql}
-       ORDER BY room_number
+      `SELECT r.id, r.room_number, r.room_type, r.facilities, r.price, r.status, r.created_at, r.updated_at,
+              o.occupant_name
+       FROM rooms r
+       LEFT JOIN LATERAL (
+         SELECT u.name AS occupant_name
+         FROM tenancy_contracts c
+         JOIN users u ON u.id = c.tenant_id
+         WHERE c.room_id = r.id AND c.status IN ('pending', 'active')
+         ORDER BY c.id DESC LIMIT 1
+       ) o ON true
+       ${whereSql}
+       ORDER BY r.room_number
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
