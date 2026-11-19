@@ -276,6 +276,74 @@ async function deactivateUser(req, res, next) {
   }
 }
 
+// Ubah data akun (nama, telepon, wali) oleh caretaker/owner
+async function updateUser(req, res, next) {
+  try {
+    const { name, phone, guardian_id } = req.body || {};
+
+    // Validasi Minimal Satu Field
+    if (name === undefined && phone === undefined && guardian_id === undefined) {
+      throw new ApiError(400, 'Isi minimal satu field yang ingin diubah (name, phone, guardian_id).');
+    }
+    // Validasi Nama
+    if (name !== undefined && (typeof name !== 'string' || name.trim().length < 2 || name.trim().length > 100)) {
+      throw new ApiError(400, 'Nama wajib 2-100 karakter.');
+    }
+    // Validasi Nomor Telepon
+    if (phone !== undefined && phone !== null && !/^[0-9+\-]{8,20}$/.test(String(phone).trim())) {
+      throw new ApiError(400, 'Format nomor telepon tidak valid (8-20 digit, boleh diawali +).');
+    }
+
+    const target = await findManageableAccount(req, req.params.id);
+
+    // Validasi Penautan Wali (hanya akun tenant yang boleh punya wali)
+    let guardianId = null;
+    const setGuardian = guardian_id !== undefined;
+    if (setGuardian) {
+      if (target.role !== 'tenant') {
+        throw new ApiError(400, 'Penautan wali hanya berlaku untuk akun tenant.');
+      }
+      if (guardian_id !== null && guardian_id !== '') {
+        const guardian = (await pool.query(`SELECT id, role FROM users WHERE id = $1 LIMIT 1`, [Number(guardian_id)])).rows[0];
+        if (!guardian) throw new ApiError(400, 'Wali tidak ditemukan.');
+        if (guardian.role !== 'guardian') throw new ApiError(400, 'Penautan wali hanya boleh merujuk akun dengan peran guardian.');
+        guardianId = guardian.id;
+      }
+    }
+
+    // Query update akun
+    await pool.query(
+      `UPDATE users SET
+         name = COALESCE($2::text, name),
+         phone = CASE WHEN $3::boolean THEN $4::text ELSE phone END,
+         guardian_id = CASE WHEN $5::boolean THEN $6::bigint ELSE guardian_id END,
+         updated_at = now()
+       WHERE id = $1`,
+      [
+        target.id,
+        name !== undefined ? name.trim() : null,
+        phone !== undefined,
+        phone !== undefined && phone !== null && phone !== '' ? String(phone).trim() : null,
+        setGuardian,
+        guardianId,
+      ]
+    );
+
+    // Data akun terbaru lengkap dengan info wali
+    const updated = (await pool.query(
+      `SELECT u.id, u.name, u.email, u.phone, u.role, u.guardian_id, u.is_active, u.created_at,
+              g.name AS guardian_name, g.email AS guardian_email, g.phone AS guardian_phone
+       FROM users u LEFT JOIN users g ON g.id = u.guardian_id
+       WHERE u.id = $1`,
+      [target.id]
+    )).rows[0];
+
+    res.status(200).json({ success: true, message: `Akun ${updated.name} berhasil diperbarui.`, data: updated });
+  } catch (err) {
+    next(err);
+  }
+}
+
 // Reset password akun (password sementara baru)
 async function resetUserPassword(req, res, next) {
   try {
@@ -298,4 +366,4 @@ async function resetUserPassword(req, res, next) {
   }
 }
 
-module.exports = { getMe, updateMe, changeMyPassword, registerAccount, listUsers, activateUser, deactivateUser, resetUserPassword };
+module.exports = { getMe, updateMe, changeMyPassword, registerAccount, listUsers, updateUser, activateUser, deactivateUser, resetUserPassword };

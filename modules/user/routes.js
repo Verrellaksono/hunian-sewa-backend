@@ -17,6 +17,8 @@ router.patch('/me/password', auth, controller.changeMyPassword);
 router.get('/users', auth, requireRole('owner', 'caretaker'), pagination, controller.listUsers);
 // Daftarkan akun baru
 router.post('/users', auth, requireRole('owner', 'caretaker'), controller.registerAccount);
+// Ubah data akun
+router.patch('/users/:id', auth, requireRole('owner', 'caretaker'), controller.updateUser);
 // Aktivasi akun
 router.patch('/users/:id/activate', auth, requireRole('owner', 'caretaker'), controller.activateUser);
 // Deaktivasi akun
