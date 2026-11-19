@@ -89,6 +89,14 @@ async function list(req, res, next) {
       params.push(req.user.id);
       where = `WHERE c.tenant_id = $1 OR u.guardian_id = $1`;
     }
+    // Filter periode tagihan, format YYYY-MM
+    if (req.query.periode !== undefined) {
+      if (!/^\d{4}-\d{2}$/.test(req.query.periode)) {
+        throw new ApiError(400, 'Filter periode harus format YYYY-MM.');
+      }
+      params.push(req.query.periode);
+      where += `${where ? ' AND ' : 'WHERE '}to_char(i.period_start, 'YYYY-MM') = $${params.length}`;
+    }
 
     // Hitung total sesuai filter
     const total = Number(

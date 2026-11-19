@@ -7,17 +7,29 @@ const VALID_CATEGORIES = ['urgent', 'routine', 'maintenance'];
 // Daftar pengumuman (urut kronologis terbaru)
 async function list(req, res, next) {
   try {
+    // Validasi Filter Kategori
+    const params = [];
+    let where = '';
+    if (req.query.category !== undefined) {
+      if (!VALID_CATEGORIES.includes(req.query.category)) {
+        throw new ApiError(400, `Filter kategori harus salah satu dari: ${VALID_CATEGORIES.join(', ')}.`);
+      }
+      params.push(req.query.category);
+      where = `WHERE a.category = $1`;
+    }
+
     // Query hitung total
-    const total = Number((await pool.query(`SELECT count(*) AS n FROM announcements`)).rows[0].n);
+    const total = Number((await pool.query(`SELECT count(*) AS n FROM announcements a ${where}`, params)).rows[0].n);
 
     // Query data halaman dan nama penulis
-    const params = [req.pagination.limit, req.pagination.offset];
+    params.push(req.pagination.limit, req.pagination.offset);
     const { rows } = await pool.query(
       `SELECT a.id, a.title, a.content, a.category, a.published_at, a.updated_at,
               u.name AS author_name
        FROM announcements a JOIN users u ON u.id = a.author_id
+       ${where}
        ORDER BY a.published_at DESC, a.id DESC
-       LIMIT $1 OFFSET $2`,
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
     );
 

@@ -185,6 +185,15 @@ async function list(req, res, next) {
       params.push(status);
       where += `${where ? ' AND ' : ' WHERE '}t.status = $${params.length}`;
     }
+    // Filter kategori opsional
+    const category = typeof req.query.category === 'string' ? req.query.category : '';
+    if (category) {
+      if (!CATEGORIES.includes(category)) {
+        throw new ApiError(400, `Kategori harus salah satu dari: ${CATEGORIES.join(', ')}.`);
+      }
+      params.push(category);
+      where += `${where ? ' AND ' : ' WHERE '}t.category = $${params.length}`;
+    }
     const clause = where;
     const total = Number(
       (await pool.query(
