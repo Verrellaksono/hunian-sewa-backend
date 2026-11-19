@@ -10,7 +10,7 @@ const router = express.Router();
 // Daftar kamar
 router.get('/', auth, pagination, controller.list);
 // Tambah kamar
-router.post('/', auth, requireRole('owner'), controller.create);
+router.post('/', auth, requireRole('owner', 'caretaker'), controller.create);
 // Ubah kamar
 router.patch('/:id', auth, requireRole('owner', 'caretaker'), controller.update);
 // Hapus kamar

@@ -67,6 +67,10 @@ async function create(req, res, next) {
     if (!room_number || !room_type) {
       throw new ApiError(400, 'Nomor kamar dan tipe kamar wajib diisi.');
     }
+    // Validasi Hak Harga (caretaker tidak boleh mengisi harga sewa)
+    if (req.user.role !== 'owner' && price !== undefined && price !== null && price !== '') {
+      throw new ApiError(403, 'Pengisian harga sewa hanya dapat dilakukan oleh owner.');
+    }
     // Validasi Harga Harus Angka Positif
     if (price !== undefined && price !== null && (!(Number(price) > 0) || !Number.isFinite(Number(price)))) {
       throw new ApiError(400, 'Harga sewa harus berupa angka lebih besar dari 0.');
@@ -122,9 +126,9 @@ async function update(req, res, next) {
     // Validasi Kamar Ditemukan
     if (!room) throw new ApiError(404, 'Kamar tidak ditemukan.');
 
-    // Validasi Hak Caretaker (caretaker tidak boleh ubah harga & status)
-    if (!isOwner && (price !== undefined || status !== undefined)) {
-      throw new ApiError(403, 'Perubahan harga sewa dan status kamar hanya dapat dilakukan oleh owner.');
+    // Validasi Hak Caretaker (caretaker tidak boleh ubah harga)
+    if (!isOwner && price !== undefined) {
+      throw new ApiError(403, 'Perubahan harga sewa hanya dapat dilakukan oleh owner.');
     }
 
     // Validasi Harga Harus Angka Positif
@@ -134,6 +138,9 @@ async function update(req, res, next) {
 
     // Validasi Aturan Status (available/occupied diatur otomatis oleh kontrak)
     if (status !== undefined) {
+      if (!VALID_STATUS.includes(status)) {
+        throw new ApiError(400, `Status harus salah satu dari: ${VALID_STATUS.join(', ')}.`);
+      }
       if (status === 'occupied') {
         throw new ApiError(400, 'Status occupied diatur otomatis oleh sistem saat kamar terkontrak.');
       }
