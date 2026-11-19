@@ -141,4 +141,51 @@ async function financial(req, res, next) {
   }
 }
 
-module.exports = { financial };
+// Label status kamar untuk laporan CSV
+function statusLabel(status) {
+  if (status === 'paid') return 'Lunas';
+  if (status === 'partial') return 'Sebagian';
+  return 'Belum Dibayar';
+}
+
+// Escape satu sel CSV (kutip bila memuat koma, kutip, atau baris baru)
+function csvCell(value) {
+  const text = value === null || value === undefined ? '' : String(value);
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+// Ekspor laporan keuangan periode terpilih sebagai CSV (owner)
+async function exportFinancial(req, res, next) {
+  try {
+    const periode = parsePeriode(req.query.periode);
+    const totals = await periodTotals(periode);
+    const rooms = await roomBreakdown(periode);
+
+    const lines = [['Nomor Kamar', 'Penyewa', 'Jumlah Tagihan', 'Jumlah Dibayar', 'Sisa', 'Status']];
+    for (const room of rooms) {
+      const paid = Number(room.paid);
+      const unpaid = Number(room.unpaid);
+      lines.push([
+        room.room_number,
+        room.tenant_name,
+        Number(room.billed),
+        paid,
+        unpaid,
+        statusLabel(roomStatus(paid, unpaid)),
+      ]);
+    }
+    lines.push(['TOTAL', '', Number(totals.billed), Number(totals.paid), Number(totals.unpaid), '']);
+
+    // BOM UTF-8 agar Excel membaca karakter non-ASCII dengan benar
+    const csv = '\uFEFF' + lines.map((row) => row.map(csvCell).join(',')).join('\r\n') + '\r\n';
+
+    res.status(200);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="laporan-keuangan-${periode}.csv"`);
+    res.send(csv);
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = { financial, exportFinancial };
