@@ -10,6 +10,11 @@ const { paginated } = require('../../utils/pagination');
 // Daftar kategori tetap tiket Kerusakan
 const CATEGORIES = ['Listrik', 'Air', 'Internet', 'AC', 'Furnitur', 'Kebersihan', 'Lainnya'];
 
+// Amankan karakter khusus LIKE agar pencarian memakai teks apa adanya
+function escapeLike(value) {
+  return value.replace(/[\\%_]/g, (ch) => '\\' + ch);
+}
+
 // Buat tiket kerusakan
 async function create(req, res, next) {
   try {
@@ -197,12 +202,24 @@ async function list(req, res, next) {
       params.push(category);
       where += `${where ? ' AND ' : ' WHERE '}t.category = $${params.length}`;
     }
+    // Filter pencarian nomor tiket, nomor kamar, atau nama penyewa
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    if (q.length > 100) {
+      throw new ApiError(400, 'Pencarian maksimal 100 karakter.');
+    }
+    if (q) {
+      params.push(`%${escapeLike(q)}%`);
+      const idx = params.length;
+      where += `${where ? ' AND ' : ' WHERE '}(('T-' || lpad(t.id::text, 4, '0')) ILIKE $${idx} OR r.room_number ILIKE $${idx} OR u.name ILIKE $${idx})`;
+    }
     const clause = where;
     const total = Number(
       (await pool.query(
         `SELECT count(*) AS n
          FROM issue_tickets t
          JOIN tenancy_contracts c ON c.id = t.contract_id
+         JOIN rooms r ON r.id = c.room_id
+         JOIN users u ON u.id = c.tenant_id
          ${clause}`,
         params
       )).rows[0].n

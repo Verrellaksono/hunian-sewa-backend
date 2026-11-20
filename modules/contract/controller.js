@@ -17,6 +17,11 @@ const CONTRACT_SELECT = `
 // Status kontrak yang sah untuk filter daftar
 const CONTRACT_STATUSES = ['pending', 'active', 'completed', 'terminated', 'cancelled'];
 
+// Amankan karakter khusus LIKE agar pencarian memakai teks apa adanya
+function escapeLike(value) {
+  return value.replace(/[\\%_]/g, (ch) => '\\' + ch);
+}
+
 // Geser tanggal 'YYYY-MM-DD' n hari 
 function addDays(dateStr, n) {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -302,11 +307,24 @@ async function listAll(req, res, next) {
       params.push(status);
       where.push(`c.status = $${params.length}`);
     }
+    // Filter pencarian nama penyewa atau nomor kamar
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    if (q.length > 100) {
+      throw new ApiError(400, 'Pencarian maksimal 100 karakter.');
+    }
+    if (q) {
+      params.push(`%${escapeLike(q)}%`);
+      where.push(`(u.name ILIKE $${params.length} OR r.room_number ILIKE $${params.length})`);
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     // Query hitung total
     const total = Number(
-      (await pool.query(`SELECT count(*) AS n FROM tenancy_contracts c ${whereSql}`, params)).rows[0].n
+      (await pool.query(
+        `SELECT count(*) AS n FROM tenancy_contracts c
+         JOIN rooms r ON r.id = c.room_id JOIN users u ON u.id = c.tenant_id ${whereSql}`,
+        params
+      )).rows[0].n
     );
 
     // Query data halaman

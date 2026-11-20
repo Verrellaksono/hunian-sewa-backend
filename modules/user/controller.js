@@ -7,6 +7,11 @@ const { paginated } = require('../../utils/pagination');
 
 const VALID_ROLES = ['owner', 'caretaker', 'tenant', 'guardian'];
 
+// Amankan karakter khusus LIKE agar pencarian memakai teks apa adanya
+function escapeLike(value) {
+  return value.replace(/[\\%_]/g, (ch) => '\\' + ch);
+}
+
 // Lihat profil sendiri
 async function getMe(req, res, next) {
   try {
@@ -185,6 +190,12 @@ async function listUsers(req, res, next) {
       throw new ApiError(403, 'Caretaker hanya dapat melihat akun tenant dan guardian.');
     }
 
+    // Filter pencarian nama, email, atau telepon
+    const q = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    if (q.length > 100) {
+      throw new ApiError(400, 'Pencarian maksimal 100 karakter.');
+    }
+
     // Caretaker otomatis dibatasi tenant & guardian
     const where = [];
     const params = [];
@@ -195,6 +206,10 @@ async function listUsers(req, res, next) {
     if (role) {
       params.push(role);
       where.push(`u.role = $${params.length}`);
+    }
+    if (q) {
+      params.push(`%${escapeLike(q)}%`);
+      where.push(`(u.name ILIKE $${params.length} OR u.email ILIKE $${params.length} OR u.phone ILIKE $${params.length})`);
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
