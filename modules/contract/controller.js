@@ -1,6 +1,6 @@
 const { pool, withTransaction } = require('../../db');
 const ApiError = require('../../utils/ApiError');
-const { addMonths, formatRupiah } = require('../../utils/datetime');
+const { addMonths, formatRupiah, formatWIB } = require('../../utils/datetime');
 const { releaseRoom } = require('../../utils/room-status');
 const { paginated } = require('../../utils/pagination');
 const { issueInvoice } = require('../billing/controller');
@@ -352,25 +352,105 @@ async function listMine(req, res, next) {
   }
 }
 
-// Detail satu kontrak 
+// Detail satu kontrak, lengkap relasi untuk layar Detail Kontrak
 async function getById(req, res, next) {
   try {
     const contract = (await pool.query(
-      `${CONTRACT_SELECT} WHERE c.id = $1`,
+      `SELECT c.id, c.tenant_id, c.room_id, c.start_date, c.end_date, c.monthly_rate,
+              c.next_due_date, c.status, c.terminated_at, c.created_at, c.updated_at,
+              r.room_number, r.room_type, r.facilities, r.price AS room_price, r.status AS room_status,
+              u.name AS tenant_name, u.email AS tenant_email, u.phone AS tenant_phone,
+              u.guardian_id, g.name AS guardian_name, cb.name AS created_by_name
+       FROM tenancy_contracts c
+       JOIN rooms r ON r.id = c.room_id
+       JOIN users u ON u.id = c.tenant_id
+       LEFT JOIN users g ON g.id = u.guardian_id
+       JOIN users cb ON cb.id = c.created_by
+       WHERE c.id = $1`,
       [parseId(req.params.id, 'ID kontrak')]
     )).rows[0];
     // Validasi Kontrak Ditemukan
     if (!contract) throw new ApiError(404, 'Kontrak tidak ditemukan.');
 
+    const isStaff = ['owner', 'caretaker'].includes(req.user.role);
     // Validasi Kepemilikan (tenant/guardian hanya boleh kontrak miliknya)
-    if (!['owner', 'caretaker'].includes(req.user.role)) {
-      const ward = (await pool.query(`SELECT guardian_id FROM users WHERE id = $1`, [contract.tenant_id])).rows[0];
-      if (contract.tenant_id !== req.user.id && ward.guardian_id !== req.user.id) {
-        throw new ApiError(403, 'Anda tidak memiliki akses ke kontrak ini.');
-      }
+    if (!isStaff && contract.tenant_id !== req.user.id && contract.guardian_id !== req.user.id) {
+      throw new ApiError(403, 'Anda tidak memiliki akses ke kontrak ini.');
     }
 
-    res.status(200).json({ success: true, data: { ...contract, monthly_rate_rupiah: formatRupiah(contract.monthly_rate) } });
+    const roomPrice = contract.room_price === null ? null : Number(contract.room_price);
+    const data = {
+      ...contract,
+      monthly_rate_rupiah: formatRupiah(contract.monthly_rate),
+      room_price_rupiah: roomPrice === null ? null : formatRupiah(roomPrice),
+      tenant: {
+        id: contract.tenant_id,
+        name: contract.tenant_name,
+        email: contract.tenant_email,
+        phone: contract.tenant_phone,
+        guardian_id: contract.guardian_id,
+        guardian_name: contract.guardian_name,
+      },
+      room: {
+        id: contract.room_id,
+        room_number: contract.room_number,
+        room_type: contract.room_type,
+        facilities: contract.facilities,
+        price: roomPrice,
+        price_rupiah: roomPrice === null ? null : formatRupiah(roomPrice),
+        status: contract.room_status,
+      },
+      counts: {},
+    };
+
+    // Tiket terkait hanya untuk staf; guardian tetap tanpa akses tiket
+    if (isStaff) {
+      const tickets = (await pool.query(
+        `SELECT t.id, ('T-' || lpad(t.id::text, 4, '0')) AS ticket_number,
+                t.category, t.description, t.status, t.created_at, t.resolved_at
+         FROM issue_tickets t
+         WHERE t.contract_id = $1
+         ORDER BY t.created_at DESC, t.id DESC`,
+        [contract.id]
+      )).rows;
+      data.tickets = tickets;
+      data.counts.tickets = tickets.length;
+    }
+
+    // Invoice terbuka dan riwayat pembayaran hanya untuk owner
+    if (req.user.role === 'owner') {
+      const invoices = (await pool.query(
+        `SELECT i.id, i.invoice_number, i.period_start, i.period_end, i.due_date,
+                i.amount, i.status, i.issued_at
+         FROM invoices i
+         WHERE i.contract_id = $1 AND i.status IN ('unpaid', 'pending')
+         ORDER BY i.due_date ASC, i.id ASC`,
+        [contract.id]
+      )).rows.map((row) => ({ ...row, amount_rupiah: formatRupiah(row.amount) }));
+
+      const payments = (await pool.query(
+        `SELECT p.id, p.status, p.payment_method, p.gross_amount, p.paid_at,
+                i.id AS invoice_id, i.invoice_number, i.period_start,
+                py.name AS payer_name
+         FROM payments p
+         JOIN invoices i ON i.id = p.invoice_id
+         JOIN users py ON py.id = p.payer_id
+         WHERE i.contract_id = $1 AND p.status = 'settlement'
+         ORDER BY p.paid_at DESC NULLS LAST, p.id DESC`,
+        [contract.id]
+      )).rows.map((row) => ({
+        ...row,
+        gross_amount_rupiah: formatRupiah(row.gross_amount),
+        paid_at_wib: formatWIB(row.paid_at),
+      }));
+
+      data.open_invoices = invoices;
+      data.payments = payments;
+      data.counts.open_invoices = invoices.length;
+      data.counts.payments = payments.length;
+    }
+
+    res.status(200).json({ success: true, data });
   } catch (err) {
     next(err);
   }
