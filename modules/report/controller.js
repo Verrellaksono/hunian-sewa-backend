@@ -1,6 +1,6 @@
 const { pool } = require('../../db');
 const ApiError = require('../../utils/ApiError');
-const { addMonths, formatRupiah, todayWIB } = require('../../utils/datetime');
+const { addMonths, daysBetween, formatRupiah, formatWIB, todayWIB } = require('../../utils/datetime');
 
 // Validasi periode YYYY-MM, kosong berarti bulan berjalan
 function parsePeriode(value) {
@@ -21,16 +21,17 @@ function lastSixPeriodes(periode) {
 }
 
 // Ringkasan tagihan satu periode, invoice cancelled tidak dihitung
-async function periodTotals(periode) {
+async function periodTotals(periode, today) {
   return (await pool.query(
     `SELECT count(*)::int AS invoice_count,
             count(*) FILTER (WHERE status = 'paid')::int AS paid_count,
+            count(*) FILTER (WHERE status IN ('unpaid', 'pending') AND due_date < $2::date)::int AS overdue_count,
             COALESCE(sum(amount), 0)::bigint AS billed,
             COALESCE(sum(amount) FILTER (WHERE status = 'paid'), 0)::bigint AS paid,
             COALESCE(sum(amount) FILTER (WHERE status IN ('unpaid', 'pending')), 0)::bigint AS unpaid
      FROM invoices
      WHERE to_char(period_start, 'YYYY-MM') = $1 AND status <> 'cancelled'`,
-    [periode]
+    [periode, today]
   )).rows[0];
 }
 
@@ -41,7 +42,12 @@ async function roomBreakdown(periode) {
             count(i.id)::int AS invoice_count,
             COALESCE(sum(i.amount), 0)::bigint AS billed,
             COALESCE(sum(i.amount) FILTER (WHERE i.status = 'paid'), 0)::bigint AS paid,
-            COALESCE(sum(i.amount) FILTER (WHERE i.status IN ('unpaid', 'pending')), 0)::bigint AS unpaid
+            COALESCE(sum(i.amount) FILTER (WHERE i.status IN ('unpaid', 'pending')), 0)::bigint AS unpaid,
+            to_char(COALESCE(
+              min(i.due_date) FILTER (WHERE i.status IN ('unpaid', 'pending')),
+              max(i.due_date)
+            ), 'YYYY-MM-DD') AS due_date,
+            max(i.paid_at) AS paid_at
      FROM invoices i
      JOIN tenancy_contracts c ON c.id = i.contract_id
      JOIN rooms r ON r.id = c.room_id
@@ -95,7 +101,8 @@ function roomStatus(paid, unpaid) {
 async function financial(req, res, next) {
   try {
     const periode = parsePeriode(req.query.periode);
-    const totals = await periodTotals(periode);
+    const today = todayWIB();
+    const totals = await periodTotals(periode, today);
     const rooms = await roomBreakdown(periode);
     const monthly = await monthlySeries(lastSixPeriodes(periode));
 
@@ -109,6 +116,7 @@ async function financial(req, res, next) {
         totals: {
           invoice_count: invoiceCount,
           paid_count: paidCount,
+          overdue_count: Number(totals.overdue_count),
           billed: Number(totals.billed),
           billed_rupiah: formatRupiah(totals.billed),
           paid: Number(totals.paid),
@@ -121,6 +129,9 @@ async function financial(req, res, next) {
         rooms: rooms.map((room) => {
           const paid = Number(room.paid);
           const unpaid = Number(room.unpaid);
+          const overdueDays = unpaid > 0 && room.due_date
+            ? Math.max(0, daysBetween(room.due_date, today))
+            : 0;
           return {
             room_number: room.room_number,
             tenant_name: room.tenant_name,
@@ -131,6 +142,10 @@ async function financial(req, res, next) {
             paid_rupiah: formatRupiah(room.paid),
             unpaid,
             unpaid_rupiah: formatRupiah(room.unpaid),
+            due_date: room.due_date,
+            paid_at: room.paid_at,
+            paid_at_wib: formatWIB(room.paid_at),
+            overdue_days: overdueDays,
             status: roomStatus(paid, unpaid),
           };
         }),
@@ -158,7 +173,7 @@ function csvCell(value) {
 async function exportFinancial(req, res, next) {
   try {
     const periode = parsePeriode(req.query.periode);
-    const totals = await periodTotals(periode);
+    const totals = await periodTotals(periode, todayWIB());
     const rooms = await roomBreakdown(periode);
 
     const lines = [['Nomor Kamar', 'Penyewa', 'Jumlah Tagihan', 'Jumlah Dibayar', 'Sisa', 'Status']];
