@@ -18,10 +18,11 @@ module.exports = {
   midtrans: {
     serverKey: process.env.MIDTRANS_SERVER_KEY || '',
     clientKey: process.env.MIDTRANS_CLIENT_KEY || '',
+    signatureKey:
+      process.env.MIDTRANS_SIGNATURE_KEY || process.env.MIDTRANS_SERVER_KEY || '',
     isProduction: process.env.MIDTRANS_IS_PRODUCTION === 'true',
     webhookUrl: process.env.WEBHOOK_URL || '',
   },
-  // Upload foto tiket: disimpan DI LUAR folder publik, akses via endpoint terotorisasi
   upload: {
     dir: path.join(__dirname, 'uploads'),
     maxFileSize: 2 * 1024 * 1024, // JPEG/PNG maks 2 MB

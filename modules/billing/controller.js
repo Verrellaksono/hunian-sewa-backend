@@ -268,7 +268,7 @@ async function handlePayment(req, res, next) {
     } = req.body || {};
 
     // Validasi Konfigurasi (key kosong = webhook tidak boleh dipercaya sama sekali)
-    if (!config.midtrans.serverKey) {
+    if (!config.midtrans.signatureKey) {
       throw new ApiError(503, 'Payment gateway belum dikonfigurasi.');
     }
 
@@ -283,13 +283,18 @@ async function handlePayment(req, res, next) {
       throw new ApiError(400, 'Notifikasi pembayaran tidak lengkap.');
     }
 
-    // Validasi Signature: SHA512 dari order_id, status_code, gross_amount, dan server_key
+    // Validasi Signature: SHA512 dari order_id, status_code, gross_amount, dan Signature Secret Key
     const expected = crypto
       .createHash('sha512')
-      .update(`${order_id}${status_code}${gross_amount}${config.midtrans.serverKey}`)
+      .update(`${order_id}${status_code}${gross_amount}${config.midtrans.signatureKey}`)
       .digest('hex');
     if (!signatureMatches(signature_key, expected)) {
       throw new ApiError(401, 'Signature tidak valid.');
+    }
+
+    // Notifikasi uji dari dashboard Midtrans memakai order_id dummy
+    if (String(order_id).startsWith('payment_notif_test_')) {
+      return res.status(200).json({ success: true, message: 'Notifikasi uji diterima.' });
     }
 
     // Cari payment
