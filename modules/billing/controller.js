@@ -87,7 +87,7 @@ async function list(req, res, next) {
     let where = '';
     if (req.user.role !== 'owner') {
       params.push(req.user.id);
-      where = `WHERE c.tenant_id = $1 OR u.guardian_id = $1`;
+      where = `WHERE (c.tenant_id = $1 OR u.guardian_id = $1) AND c.status IN ('pending', 'active')`;
     }
     // Filter periode tagihan, format YYYY-MM
     if (req.query.periode !== undefined) {

@@ -168,7 +168,8 @@ async function ownerSummary() {
             count(*) FILTER (WHERE status = 'unpaid')::int AS unpaid,
             count(*) FILTER (WHERE status = 'pending')::int AS pending
      FROM invoices
-     WHERE date_trunc('month', period_start) = date_trunc('month', now())`
+     WHERE date_trunc('month', period_start) = date_trunc('month', now())
+       AND status IN ('paid', 'unpaid', 'pending')`
   )).rows[0];
   const totalCount = Number(currentPeriod.total);
   const paidCount = Number(currentPeriod.paid);
