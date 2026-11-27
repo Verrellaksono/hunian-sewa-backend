@@ -97,8 +97,8 @@ async function updateStatus(req, res, next) {
       throw new ApiError(400, 'technical_note wajib diisi pada setiap perubahan status.');
     }
 
-    // Status asal yang sah untuk transisi ini (alur satu arah)
-    const expectedFrom = status === 'in_progress' ? 'pending' : 'in_progress';
+    // Status asal yang sah (satu arah): pending boleh langsung resolved
+    const fromStatuses = status === 'in_progress' ? ['pending'] : ['pending', 'in_progress'];
     const updated = await pool.query(
       `UPDATE issue_tickets
        SET status = $3::varchar,
@@ -106,9 +106,9 @@ async function updateStatus(req, res, next) {
            resolved_at = CASE WHEN $3::varchar = 'resolved' THEN now() ELSE NULL END,
            resolved_by = CASE WHEN $3::varchar = 'resolved' THEN $5::bigint ELSE NULL END,
            updated_at = now()
-       WHERE id = $1 AND status = $2
+       WHERE id = $1 AND status = ANY($2::varchar[])
        RETURNING id`,
-      [id, expectedFrom, status, technical_note.trim(), req.user.id]
+      [id, fromStatuses, status, technical_note.trim(), req.user.id]
     );
     if (updated.rows.length === 0) {
       // Bedakan: tiket tidak ada (404) vs alur status melompat/mundur (409)
@@ -117,7 +117,7 @@ async function updateStatus(req, res, next) {
       if (existing.status === 'resolved') {
         throw new ApiError(409, 'Tiket sudah resolved (final, tidak bisa dibuka lagi). Masalah baru silakan buat tiket baru.');
       }
-      throw new ApiError(409, `Perubahan status tidak sesuai alur: pending → in_progress → resolved (status saat ini: ${existing.status}).`);
+      throw new ApiError(409, `Perubahan status tidak sesuai: dari ${existing.status} tidak bisa ke ${status}.`);
     }
 
     // Detail tiket terbaru, lengkap nomor kamar & penyewa via join
