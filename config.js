@@ -4,6 +4,8 @@ const path = require('path');
 
 module.exports = {
   port: parseInt(process.env.PORT || '3000', 10),
+  // Origin frontend untuk redirect balik setelah pembayaran Midtrans
+  frontendUrl: (process.env.FRONTEND_URL || '').replace(/\/+$/, ''),
   db: {
     host: process.env.DB_HOST || 'localhost',
     port: parseInt(process.env.DB_PORT || '5432', 10),

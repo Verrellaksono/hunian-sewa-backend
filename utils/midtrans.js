@@ -9,7 +9,7 @@ function snapBaseUrl() {
 }
 
 // Buat transaksi Snap; return { token, paymentUrl }
-async function createSnapTransaction({ orderId, grossAmount, customerName, itemDetails }) {
+async function createSnapTransaction({ orderId, grossAmount, customerName, itemDetails, finishUrl }) {
   // Validasi Konfigurasi (server key belum diisi .env)
   if (!config.midtrans.serverKey) {
     throw new ApiError(503, 'Payment gateway belum dikonfigurasi. Hubungi pengelola.');
@@ -29,6 +29,8 @@ async function createSnapTransaction({ orderId, grossAmount, customerName, itemD
         item_details: itemDetails,
         customer_details: { first_name: customerName },
         expiry: { duration: 60, unit: 'minutes' },
+        // Semua hasil pembayaran balik ke halaman tagihan, bukan contoh dashboard
+        ...(finishUrl ? { callbacks: { finish: finishUrl, unfinish: finishUrl, error: finishUrl } } : {}),
       }),
     });
   } catch (err) {

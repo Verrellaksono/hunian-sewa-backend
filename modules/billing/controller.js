@@ -139,6 +139,19 @@ async function getById(req, res, next) {
   }
 }
 
+// Halaman tagihan per peran; hash dipakai karena router frontend berbasis hash
+const BILLS_PATH = {
+  tenant: '#/tenant/bills-payments',
+  guardian: '#/guardian/bills-payments',
+};
+
+// URL balik ke aplikasi setelah pembayaran Snap selesai
+function billsFinishUrl(req) {
+  const origin = req.get('origin');
+  const base = (config.frontendUrl || origin || 'http://localhost:5173').replace(/\/+$/, '');
+  return `${base}/${BILLS_PATH[req.user.role] || BILLS_PATH.tenant}`;
+}
+
 // Mulai pembayaran invoice 
 async function pay(req, res, next) {
   try {
@@ -201,6 +214,7 @@ async function pay(req, res, next) {
         grossAmount: invoice.amount,
         customerName: req.user.name,
         itemDetails: [{ id: 'RENT', price: invoice.amount, quantity: 1, name: 'Sewa kamar' }],
+        finishUrl: billsFinishUrl(req),
       });
     } catch (err) {
       // Gateway gagal: TANPA record, payment dihapus dan invoice kembali unpaid
