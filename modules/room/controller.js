@@ -9,6 +9,7 @@ function formatRoomRow(row) {
 }
 
 const VALID_STATUS = ['available', 'occupied', 'maintenance'];
+const VALID_ROOM_TYPES = ['Standard', 'Premium', 'Deluxe'];
 
 // Daftar kamar
 async function list(req, res, next) {
@@ -67,6 +68,11 @@ async function create(req, res, next) {
     if (!room_number || !room_type) {
       throw new ApiError(400, 'Nomor kamar dan tipe kamar wajib diisi.');
     }
+    // Validasi Tipe Kamar dari daftar tetap
+    const tipe = String(room_type).trim();
+    if (!VALID_ROOM_TYPES.includes(tipe)) {
+      throw new ApiError(400, `Tipe kamar harus salah satu dari: ${VALID_ROOM_TYPES.join(', ')}.`);
+    }
     // Validasi Hak Harga (caretaker tidak boleh mengisi harga sewa)
     if (req.user.role !== 'owner' && price !== undefined && price !== null && price !== '') {
       throw new ApiError(403, 'Pengisian harga sewa hanya dapat dilakukan oleh owner.');
@@ -92,7 +98,7 @@ async function create(req, res, next) {
       `INSERT INTO rooms (room_number, room_type, facilities, price)
        VALUES ($1, $2, $3, $4)
        RETURNING id, room_number, room_type, facilities, price, status, created_at, updated_at`,
-      [nomor, String(room_type).trim(), facilities ?? null, price === '' ? null : price]
+      [nomor, tipe, facilities ?? null, price === '' ? null : price]
     );
 
     res.status(201).json({ success: true, message: 'Kamar berhasil ditambahkan.', data: formatRoomRow(rows[0]) });
@@ -106,6 +112,15 @@ async function update(req, res, next) {
   try {
     const { room_number, room_type, facilities, price, status } = req.body || {};
     const isOwner = req.user.role === 'owner';
+
+    // Validasi Tipe Kamar bila dikirim
+    let tipe;
+    if (room_type !== undefined) {
+      tipe = String(room_type).trim();
+      if (!VALID_ROOM_TYPES.includes(tipe)) {
+        throw new ApiError(400, `Tipe kamar harus salah satu dari: ${VALID_ROOM_TYPES.join(', ')}.`);
+      }
+    }
 
     // Validasi Minimal Satu Field
     const allUndefined =
@@ -152,7 +167,7 @@ async function update(req, res, next) {
     // Susun field yang boleh diubah
     const fields = {};
     if (room_number !== undefined) fields.room_number = String(room_number).trim();
-    if (room_type !== undefined) fields.room_type = String(room_type).trim();
+    if (room_type !== undefined) fields.room_type = tipe;
     if (facilities !== undefined) fields.facilities = facilities;
     if (price !== undefined) fields.price = price;
     if (status !== undefined) fields.status = status;
