@@ -13,6 +13,7 @@ const { occupyRoom, releaseRoom } = require('../../utils/room-status');
 const INVOICE_SELECT = `
   SELECT i.id, i.invoice_number, i.contract_id, i.period_start, i.period_end, i.due_date,
          i.amount, i.status, i.issued_at, i.paid_at,
+         c.status AS contract_status,
          r.room_number, u.name AS tenant_name, c.tenant_id, u.guardian_id
   FROM invoices i
   JOIN tenancy_contracts c ON c.id = i.contract_id

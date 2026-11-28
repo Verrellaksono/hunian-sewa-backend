@@ -115,6 +115,25 @@ async function guardianSummary(userId, today) {
   return { wards };
 }
 
+// Ringkasan tiket (aktif, pending, in_progress, resolved)
+async function ticketSummary() {
+  const row = (await pool.query(
+    `SELECT count(*) FILTER (WHERE status IN ('pending', 'in_progress'))::int AS active,
+            count(*) FILTER (WHERE status = 'pending')::int AS pending,
+            count(*) FILTER (WHERE status = 'in_progress')::int AS in_progress,
+            count(*) FILTER (WHERE status = 'resolved')::int AS resolved
+     FROM issue_tickets`
+  )).rows[0];
+  return {
+    count: Number(row.active || 0),
+    pending: Number(row.pending || 0),
+    waiting: Number(row.pending || 0),
+    in_progress: Number(row.in_progress || 0),
+    resolved: Number(row.resolved || 0),
+    completed: Number(row.resolved || 0),
+  };
+}
+
 // Jumlah tiket yang belum selesai
 async function activeTicketCount() {
   const row = (await pool.query(
@@ -139,7 +158,7 @@ async function caretakerSummary() {
   )).rows[0];
   return {
     occupancy: await occupancy(),
-    active_tickets: { count: await activeTicketCount(), items: tickets },
+    active_tickets: { ...(await ticketSummary()), items: tickets },
     pending_contracts: Number(pendingContracts.n),
     ticket_queue: tickets,
   };
@@ -176,7 +195,7 @@ async function ownerSummary() {
   return {
     occupancy: occ,
     contracts,
-    active_tickets: { count: await activeTicketCount() },
+    active_tickets: await ticketSummary(),
     open_invoices: { count: Number(open.n), amount: Number(open.amount), amount_rupiah: formatRupiah(open.amount) },
     paid_this_month: { count: Number(paidThisMonth.n), amount: Number(paidThisMonth.amount), amount_rupiah: formatRupiah(paidThisMonth.amount) },
     invoices_current_period: {
